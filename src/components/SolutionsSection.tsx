@@ -77,14 +77,12 @@ function SolutionCard({
 }
 
 interface SolutionsSectionProps {
-  horizon: number;
   dynamicFactors: Record<string, import("../lib/model").Factor[]>;
   healthStatus: "Initializing AI" | "Online Model Connected" | "Offline Model";
   globalSolutions: Solution[];
 }
 
 export default function SolutionsSection({
-  horizon,
   dynamicFactors,
   healthStatus,
   globalSolutions,
@@ -92,7 +90,7 @@ export default function SolutionsSection({
   const allSolutions = useMemo(() => {
     if (globalSolutions.length > 0) return globalSolutions;
     const factors = Object.values(dynamicFactors).flat();
-    return factors.slice(0, MAX_SOLUTIONS).map((f, i) => ({
+    return factors.slice(0, MAX_SOLUTIONS).map((f) => ({
       id: `solution-${f.id}`,
       title: f.name,
       summary: f.explanation,

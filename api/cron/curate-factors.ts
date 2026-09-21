@@ -3,7 +3,7 @@ import { tinyfishRouter } from "../_shared/tinyfishRouter.js";
 import { REGION_NAMES, type Region } from "../_shared/regions.js";
 import { getGlobalAnalytics, getRegionalAnalytics } from "../_shared/deterministicAnalytics.js";
 import { FACTORS_CACHE_MS } from "../_shared/http.js";
-import { getCache, setCache } from "../_shared/cache.js";
+import { setCache } from "../_shared/cache.js";
 import { safeParseJson, sanitizeError } from "../_shared/validation.js";
 import type { Factor } from "../_shared/types.js";
 
@@ -201,10 +201,6 @@ async function runFactorAnalysis(scope: "global" | Region, region: Region | null
     .map((r) => ({ ...r, snippet: typeof r.snippet === "string" ? r.snippet : "" }))
     .filter((r) => isReputableSource(r.url) && isRecentPublishedAt(r.publishedAt))
     .slice(0, 15);
-  const candidates = search.results
-    .map((r) => ({ ...r, snippet: typeof r.snippet === "string" ? r.snippet : "" }))
-    .filter((r) => isReputableSource(r.url) && isRecentPublishedAt(r.publishedAt))
-    .slice(0, 5);
   if (candidates.length === 0) return buildFallbackFactors(scope, region);
   const excerpts = await Promise.all(
     candidates.map(async (r) => {

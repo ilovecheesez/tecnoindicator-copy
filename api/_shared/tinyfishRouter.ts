@@ -2,7 +2,6 @@ import {
   TINYFISH_KEY_ENV_NAMES,
   readConfiguredKeys,
   sanitizeUrl,
-  SEARCH_CACHE_MS,
 } from "./http.js";
 import { getCache, setCache } from "./cache.js";
 import type { Region } from "./regions.js";

@@ -7,7 +7,7 @@ import SolutionsSection from "./components/SolutionsSection";
 import AboutSection from "./components/AboutSection";
 import Footer from "./components/Footer";
 import { useLiveMarket } from "./hook/useLiveMarket";
-import { generateForecast, type RegionId, FACTORS, REGIONAL_FACTORS, EVAL_REGIONS, type Factor } from "./lib/model";
+import { generateForecast, type RegionId, REGIONAL_FACTORS, EVAL_REGIONS, type Factor } from "./lib/model";
 
 export type Solution = {
   id: string;
@@ -47,7 +47,6 @@ export default function App() {
 
   const [healthStatus, setHealthStatus] = useState<"Initializing AI" | "Online Model Connected" | "Offline Model">("Initializing AI");
   const [_onlineModelConnected, setOnlineModelConnected] = useState(false);
-  const [globalFactors, setGlobalFactors] = useState<Factor[]>(FACTORS);
   const [regionalFactors, setRegionalFactors] = useState<Record<string, Factor[]>>({});
   const [globalSolutions, setGlobalSolutions] = useState<Solution[]>([]);
   const [_regionalAnalytics, setRegionalAnalytics] = useState<Record<string, unknown>>({});
@@ -125,12 +124,10 @@ export default function App() {
     const pollFactors = async () => {
       try {
         const res = await fetch("/api/dynamic-factors");
-        if (res.ok) {
-          const data = await res.json();
-          if (active && Array.isArray(data.factors) && data.factors.length === 8) {
-            setGlobalFactors(data.factors);
+          if (res.ok) {
+            const data = await res.json();
+            void data;
           }
-        }
       } catch { /* ignore */ }
       for (const r of EVAL_REGIONS) {
         try {
@@ -156,12 +153,12 @@ export default function App() {
     const pollFactors = async () => {
       try {
         const res = await fetch("/api/dynamic-factors");
-        if (res.ok) {
-          const data = await res.json();
-          if (active && Array.isArray(data.factors) && data.factors.length > 0) {
-            setGlobalFactors(data.factors);
+          if (res.ok) {
+            const data = await res.json();
+            if (active && Array.isArray(data.factors) && data.factors.length > 0) {
+              void data.factors;
+            }
           }
-        }
       } catch { /* ignore */ }
       for (const r of EVAL_REGIONS) {
         try {
@@ -222,7 +219,6 @@ export default function App() {
           onRegion={setRegion}
         />
         <SolutionsSection
-          horizon={horizon}
           dynamicFactors={regionalFactors}
           healthStatus={healthStatus}
           globalSolutions={globalSolutions}
