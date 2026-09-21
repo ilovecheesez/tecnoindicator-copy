@@ -1,4 +1,4 @@
-import { getCache, setCache } from "./cache.js";
+import { getCache, setCache, deleteCache } from "./cache.js";
 import {
   ANALYTICS_CACHE_MS,
   clamp,
@@ -148,9 +148,8 @@ export async function getRegionalAnalytics(region: Region): Promise<RegionalAnal
     return result as RegionalAnalyticsSnapshot;
 }
 
-export function clearAnalyticsCache(): void {
-    ["analytics:global", ...Object.keys(REGION_NAMES).map((r) => `analytics:regional:${r}`)].forEach((key) => {
-        const entry = (globalThis as Record<string, unknown>).__cache as Map<string, { expiresAt: number }> | undefined;
-        entry?.delete(key);
-    });
+export async function clearAnalyticsCache(): Promise<void> {
+  await Promise.all(
+    ["analytics:global", ...Object.keys(REGION_NAMES).map((r) => `analytics:regional:${r}`)].map((key) => deleteCache(key)),
+  );
 }

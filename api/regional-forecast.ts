@@ -44,9 +44,8 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     const kiloStatus = await kiloRouter.getKiloStatus();
-    const aiEnabled = process.env.AI_FORECAST_ENABLED === "true";
 
-    if (!aiEnabled || !kiloStatus.available || kiloStatus.zeroCostModels.length === 0) {
+    if (!kiloStatus.available || kiloStatus.zeroCostModels.length === 0) {
       const fallback = buildRegionalForecastFallback(region);
       await setCache(cacheKey, fallback, FORECAST_CACHE_MS);
       return Response.json(fallback, { status: 200 });
