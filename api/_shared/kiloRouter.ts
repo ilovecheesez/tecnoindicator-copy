@@ -75,12 +75,27 @@ export class KiloRouter {
   private keyStates: KiloKeyState[] = [];
   private modelCandidates: ModelCandidate[] = [];
   private initialized: boolean = false;
+  private initializing: Promise<void> | null = null;
   private catalogLastRefresh: string | null = null;
 
   async initKiloRouter(): Promise<void> {
     if (this.initialized) return;
+    if (this.initializing) {
+      await this.initializing;
+      return;
+    }
+    this.initializing = this._doInit();
+    await this.initializing;
+  }
 
+  private async _doInit(): Promise<void> {
     const keys = readConfiguredKeys(KILO_KEY_ENV_NAMES);
+    if (keys.length === 0) {
+      this.keyStates = [];
+      this.initialized = true;
+      this.initializing = null;
+      return;
+    }
     this.keyStates = keys.map((key, index) => ({
       keyIndex: index,
       envName: key.envName,
@@ -117,6 +132,7 @@ export class KiloRouter {
     }
 
     this.initialized = true;
+    this.initializing = null;
   }
 
   async refreshKiloModels(force: boolean = false): Promise<void> {
@@ -131,9 +147,11 @@ export class KiloRouter {
     }
 
     try {
+      const authKey = this.keyStates[0]?.envName ? (process.env[this.keyStates[0].envName] ?? "") : "";
       const response = await fetch(KILO_GATEWAY_MODELS_URL, {
         headers: {
           Accept: "application/json",
+          ...(authKey ? { Authorization: `Bearer ${authKey}` } : {}),
         },
       });
 
@@ -378,6 +396,8 @@ export class KiloRouter {
   async kiloInfer(payload: KiloInferPayload): Promise<KiloResponse> {
     if (!this.initialized) {
       await this.initKiloRouter();
+    } else if (this.initializing) {
+      await this.initializing;
     }
 
     // Force refresh before returning complete Kilo-unavailable
@@ -544,6 +564,8 @@ const result: KiloResponse = {
   async getKiloStatus(): Promise<KiloStatus> {
     if (!this.initialized) {
       await this.initKiloRouter();
+    } else if (this.initializing) {
+      await this.initializing;
     }
 
     const zeroCostModels = this.modelCandidates
@@ -579,7 +601,12 @@ const result: KiloResponse = {
   private shuffle<T>(array: T[]): T[] {
     const result = [...array];
     for (let i = result.length - 1; i > 0; i--) {
-      const cryptoArray = crypto.getRandomValues(new Uint32Array(1));
+      let cryptoArray: Uint32Array;
+      try {
+        cryptoArray = crypto.getRandomValues(new Uint32Array(1));
+      } catch {
+        cryptoArray = new Uint32Array([Math.floor(Math.random() * 0xFFFFFFFF)]);
+      }
       const j = cryptoArray[0] % (i + 1);
       [result[i], result[j]] = [result[j], result[i]];
     }

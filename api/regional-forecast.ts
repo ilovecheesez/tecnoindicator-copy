@@ -121,8 +121,8 @@ export default async function handler(req: Request): Promise<Response> {
     return Response.json(validated, { status: 200 });
   } catch (error) {
     console.error("Regional forecast error:", error);
-    const region = isRegion(regionParam) ? (regionParam as Region) : "asia";
-    const fallback = buildRegionalForecastFallback(region);
+    const fallbackRegion = isRegion(regionParam) ? (regionParam as Region) : "asia";
+    const fallback = buildRegionalForecastFallback(fallbackRegion);
     return Response.json(fallback, { status: 503 });
   }
 }

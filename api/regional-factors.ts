@@ -183,15 +183,6 @@ function dedupeFactors(factors: Factor[]): Factor[] {
 function replaceOldest(factors: Factor[], incoming: Factor[]): Factor[] {
   let next = [...factors, ...incoming];
   next = dedupeFactors(next);
-  next = next.filter((f) => f.scope === incoming[0]?.scope);
-  if (next.length > MAX_FACTORS) {
-    const oldest = next
-      .map((f) => ({ f, ts: Date.parse(f.createdAt) || 0 }))
-      .sort((a, b) => a.ts - b.ts)
-      .slice(0, next.length - MAX_FACTORS);
-    const oldestIds = new Set(oldest.map((o) => o.f.id));
-    next = next.filter((f) => !oldestIds.has(f.id));
-  }
   return next.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, MAX_FACTORS);
 }
 
@@ -225,16 +216,18 @@ function buildFallbackFactors(scope: Region, region: Region): Factor[] {
 }
 
 async function runFactorAnalysis(scope: Region, region: Region): Promise<Factor[]> {
-  const current = await getCache<Factor[]>(`dynamic-factors:${scope}`, FACTORS_CACHE_MS);
-  if (current) return current;
   const analytics = await getRegionalAnalytics(region);
-  const existing = current ?? buildFallbackFactors(scope, region);
-  const searchQuery = REGION_QUERIES[region][0];
-  const search = await tinyfishRouter.tinyfishSearch(`${searchQuery} ${RECENT_MONTH()}`, { limit: 10, region });
-  const candidates = search.results
+  const existing = buildFallbackFactors(scope, region);
+  const searches = await Promise.all(
+    REGION_QUERIES[region].map((q) =>
+      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region }),
+    ),
+  );
+  const candidates = searches
+    .flatMap((r) => r.results)
     .map((r) => ({ ...r, snippet: typeof r.snippet === "string" ? r.snippet : "" }))
     .filter((r) => isReputableSource(r.url) && isRecentPublishedAt(r.publishedAt))
-    .slice(0, 5);
+    .slice(0, 15);
   if (candidates.length === 0) return buildFallbackFactors(scope, region);
   const excerpts = await Promise.all(
     candidates.map(async (r) => {

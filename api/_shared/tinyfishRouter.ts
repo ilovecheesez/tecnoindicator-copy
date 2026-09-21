@@ -2,6 +2,7 @@ import {
   TINYFISH_KEY_ENV_NAMES,
   readConfiguredKeys,
   sanitizeUrl,
+  SEARCH_CACHE_MS,
 } from "./http.js";
 import { getCache, setCache } from "./cache.js";
 import type { Region } from "./regions.js";
@@ -55,6 +56,11 @@ export class TinyFishRouter {
     if (!force && this.initialized && this.keyStates.length > 0) return;
 
     const keys = readConfiguredKeys(TINYFISH_KEY_ENV_NAMES);
+    if (keys.length === 0) {
+      this.keyStates = [];
+      this.initialized = false;
+      return;
+    }
     this.keyStates = keys.map((key, index) => ({
       keyIndex: index,
       envName: key.envName,
@@ -304,6 +310,7 @@ export class TinyFishRouter {
 
           keyState.lastCheckedAt = new Date().toISOString();
           keyState.lastSuccessAt = keyState.lastCheckedAt;
+          this.parseRateLimitHeaders(keyState, response);
 
           await setCache(cacheKey, result, 10 * 60 * 1000);
           return result;

@@ -153,18 +153,6 @@ function dedupeFactors(factors: Factor[]): Factor[] {
 function replaceOldest(factors: Factor[], incoming: Factor[]): Factor[] {
   let next = [...factors, ...incoming];
   next = dedupeFactors(next);
-  const byScope = (f: Factor) => f.scope;
-  const currentScope = (f: Factor): boolean =>
-    f.scope === "global" || (byScope(f) as string) === (incoming[0]?.scope as string);
-  next = next.filter(currentScope);
-  if (next.length > MAX_FACTORS) {
-    const oldest = next
-      .map((f) => ({ f, ts: Date.parse(f.createdAt) || 0 }))
-      .sort((a, b) => a.ts - b.ts)
-      .slice(0, next.length - MAX_FACTORS);
-    const oldestIds = new Set(oldest.map((o) => o.f.id));
-    next = next.filter((f) => !oldestIds.has(f.id));
-  }
   return next.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, MAX_FACTORS);
 }
 
@@ -200,13 +188,19 @@ function buildFallbackFactors(scope: "global" | Region, region: Region | null): 
 }
 
 async function runFactorAnalysis(scope: "global" | Region, region: Region | null): Promise<Factor[]> {
-  const cacheKey = `dynamic-factors:${scope}`;
-  const current = await getCache<Factor[]>(cacheKey, FACTORS_CACHE_MS);
-  if (current) return current;
   const analytics = scope === "global" ? await getGlobalAnalytics() : await getRegionalAnalytics(region!);
-  const existing = current ?? buildFallbackFactors(scope, region);
-  const searchQuery = (REGION_QUERIES[region ?? "asia"] ?? GLOBAL_QUERIES)[0];
-  const search = await tinyfishRouter.tinyfishSearch(`${searchQuery} ${RECENT_MONTH()}`, { limit: 10, region: region ?? undefined });
+  const existing = buildFallbackFactors(scope, region);
+  const queries = scope === "global" ? GLOBAL_QUERIES : REGION_QUERIES[region ?? "asia"];
+  const searches = await Promise.all(
+    queries.map((q) =>
+      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region: region ?? undefined }),
+    ),
+  );
+  const candidates = searches
+    .flatMap((r) => r.results)
+    .map((r) => ({ ...r, snippet: typeof r.snippet === "string" ? r.snippet : "" }))
+    .filter((r) => isReputableSource(r.url) && isRecentPublishedAt(r.publishedAt))
+    .slice(0, 15);
   const candidates = search.results
     .map((r) => ({ ...r, snippet: typeof r.snippet === "string" ? r.snippet : "" }))
     .filter((r) => isReputableSource(r.url) && isRecentPublishedAt(r.publishedAt))

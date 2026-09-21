@@ -72,7 +72,6 @@ export default async function handler(_req: Request): Promise<Response> {
     }
 
     const onlineModelConnected =
-      process.env.AI_FORECAST_ENABLED === "true" &&
       kiloStatus.available &&
       kiloStatus.usableKeys > 0 &&
       kiloStatus.zeroCostModels.length > 0 &&
