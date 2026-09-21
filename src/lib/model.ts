@@ -17,6 +17,20 @@ export type RegionId =
   | "africa"
   | "oceania";
 
+export interface Solution {
+  id: string;
+  title: string;
+  summary: string;
+  actions: string[];
+  commodities: CommodityId[];
+  regions?: RegionId[];
+  scope: RegionId;
+  relatedFactors: string[];
+  confidence: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Commodity {
   id: CommodityId;
   name: string;
