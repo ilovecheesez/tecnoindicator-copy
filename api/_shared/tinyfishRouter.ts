@@ -42,6 +42,20 @@ interface ScrapedContent {
 const SEARCH_URL = "https://api.search.tinyfish.ai";
 const FETCH_URL = "https://api.fetch.tinyfish.ai";
 
+function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller.signal;
+    }
+    signal.addEventListener("abort", () => {
+      controller.abort(signal.reason);
+    }, { once: true });
+  }
+  return controller.signal;
+}
+
 function buildSearchUrl(query: string, limit: number): string {
   const params = new URLSearchParams({ query, limit: String(limit) });
   return `${SEARCH_URL}?${params.toString()}`;
@@ -51,7 +65,7 @@ export class TinyFishRouter {
   private keyStates: TinyFishKeyState[] = [];
   private initialized: boolean = false;
 
-  async refreshTinyfishStatus(force: boolean = false): Promise<void> {
+  async refreshTinyfishStatus(force: boolean = false, abortSignal?: AbortSignal): Promise<void> {
     if (!force && this.initialized && this.keyStates.length > 0) return;
 
     const keys = readConfiguredKeys(TINYFISH_KEY_ENV_NAMES);
@@ -74,6 +88,9 @@ export class TinyFishRouter {
     // Probe all keys in PARALLEL with a short timeout to avoid Vercel function timeouts.
     // Sequential probing with 10s timeouts each would take too long with many keys.
     const controller = new AbortController();
+    const combinedSignal = abortSignal
+      ? combineAbortSignals(abortSignal, controller.signal)
+      : controller.signal;
     const overallTimeout = setTimeout(() => controller.abort(), 3000);
     try {
       const probeResults = await Promise.all(
@@ -86,7 +103,7 @@ export class TinyFishRouter {
               headers: {
                 "X-API-Key": testKey,
               },
-              signal: controller.signal,
+              signal: combinedSignal,
             });
             return { keyIndex: keyState.keyIndex, ok: true, status: response.status, headers: response.headers };
           } catch {
@@ -374,14 +391,14 @@ export class TinyFishRouter {
     return null;
   }
 
-  async getTinyfishStatus(): Promise<{
+  async getTinyfishStatus(abortSignal?: AbortSignal): Promise<{
     available: boolean;
     configuredKeys: number;
     usableKeys: number;
     rateLimitedKeys: number[];
   }> {
     if (!this.initialized) {
-      await this.refreshTinyfishStatus(true);
+      await this.refreshTinyfishStatus(true, abortSignal);
     }
 
     return {

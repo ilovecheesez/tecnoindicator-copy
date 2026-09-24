@@ -3,17 +3,6 @@ import { getGlobalAnalytics, getRegionalAnalytics } from "./_shared/deterministi
 import { kiloRouter } from "./_shared/kiloRouter.js";
 import { tinyfishRouter } from "./_shared/tinyfishRouter.js";
 
-type KiloStatusLike = {
-  available: boolean;
-  usableKeys: number;
-  zeroCostModels: string[];
-};
-
-type TinyfishStatusLike = {
-  available: boolean;
-  usableKeys: number;
-};
-
 interface HealthResponse {
   kiloGateway: {
     available: boolean;
@@ -56,17 +45,6 @@ interface HealthResponse {
   };
 }
 
-// Abort timeout helper - aborts the signal after the given ms
-function withAbortTimeout(
-  ms: number,
-  abortSignal: AbortSignal
-): AbortSignal {
-  const controller = new AbortController();
-  const originalSignal = abortSignal;
-  const timeoutId = setTimeout(() => controller.abort(), ms);
-  return controller.signal;
-}
-
 export default async function handler(_req: Request): Promise<Response> {
   // Global abort controller for the entire health check with 7s total budget
   // Leaves 3s buffer for Vercel's 10s default timeout (or 23s buffer for 30s maxDuration)
@@ -94,7 +72,7 @@ export default async function handler(_req: Request): Promise<Response> {
           const [globalAnalytics, regionalResults] = await Promise.all([
             globalAnalyticsPromise,
             Promise.race([
-              Promise.all(reginalAnalyticsPromises).then((results) =>
+                Promise.all(regionalAnalyticsPromises).then((results) =>
                 Object.fromEntries(
                   results.map(({ region, result }) => [region, result])
                 )
