@@ -232,13 +232,14 @@ function buildFallbackFactors(scope: "global" | Region, region: Region | null): 
   }));
 }
 
-async function runFactorAnalysis(scope: "global" | Region, region: Region | null, abortController?: AbortController): Promise<Factor[]> {
+async function runFactorAnalysis(scope: "global" | Region, region: Region | null, abortController?: AbortController): Promise<{ factors: Factor[]; aiCurated: boolean }> {
   const analytics = scope === "global" ? await getGlobalAnalytics() : await getRegionalAnalytics(region!);
   const existing = buildFallbackFactors(scope, region);
   const queries = scope === "global" ? GLOBAL_QUERIES : REGION_QUERIES[region ?? "asia"];
+  const signal = abortController?.signal;
   const searches = await Promise.all(
     queries.map((q) =>
-      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region: region ?? undefined }, abortController?.signal),
+      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region: region ?? undefined }, signal),
     ),
   );
   const candidates = searches
@@ -246,11 +247,11 @@ async function runFactorAnalysis(scope: "global" | Region, region: Region | null
     .map((r) => ({ ...r, snippet: typeof r.snippet === "string" ? r.snippet : "" }))
     .filter((r) => isReputableSource(r.url) && isRecentPublishedAt(r.publishedAt))
     .slice(0, 15);
-  if (candidates.length === 0) return buildFallbackFactors(scope, region);
+  if (candidates.length === 0) return { factors: buildFallbackFactors(scope, region), aiCurated: false };
   const excerpts = await Promise.all(
     candidates.map(async (r) => {
       try {
-        const scraped = await tinyfishRouter.tinyfishScrape(r.url, abortController?.signal);
+        const scraped = await tinyfishRouter.tinyfishScrape(r.url, signal);
         return scraped
           ? { ...r, text: scraped.text, title: scraped.title || r.title }
           : r;
@@ -280,16 +281,16 @@ async function runFactorAnalysis(scope: "global" | Region, region: Region | null
     max_tokens: 4096,
     temperature: 0.2,
   };
-  const response = await kiloRouter.kiloInfer(payload, abortController?.signal);
+  const response = await kiloRouter.kiloInfer(payload, signal);
   const content = response.choices?.[0]?.message?.content ?? "";
   const parsed = safeParseJson<{ factors?: unknown[] }>(content);
-  if (!parsed?.factors) return buildFallbackFactors(scope, region);
+  if (!parsed?.factors) return { factors: buildFallbackFactors(scope, region), aiCurated: false };
   const normalized = parsed.factors
     .map((f) => normalizeFactor(f, scope, region))
     .filter((f): f is Factor => f !== null)
     .filter((f) => f.scope === scope || (scope === "global" && f.regions?.includes("global")))
     .slice(0, MAX_FACTORS);
-  return replaceOldest(existing, normalized);
+  return { factors: replaceOldest(existing, normalized), aiCurated: true };
 }
 
 export default async function handler(req: Request): Promise<Response> {
