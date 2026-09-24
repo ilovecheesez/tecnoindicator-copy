@@ -313,7 +313,7 @@ export default async function handler(req: Request): Promise<Response> {
     // the timeout fires, all underlying fetch calls are actually aborted
     // (Promise.race alone doesn't cancel background operations).
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 6000);
+    const timeoutId = setTimeout(() => abortController.abort(), 15000);
     try {
       const factors = await runFactorAnalysis(scope, isGlobal ? null : scope as Region, abortController);
       await setCache(cacheKey, factors, FACTORS_CACHE_MS);

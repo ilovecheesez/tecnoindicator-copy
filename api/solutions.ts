@@ -103,7 +103,7 @@ export default async function handler(req: Request): Promise<Response> {
     // Use AbortController to abort the Kilo inference on timeout, so the
     // underlying fetch is cancelled (not just timed out via Promise.race).
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 6000);
+    const timeoutId = setTimeout(() => abortController.abort(), 15000);
     try {
       const response = await kiloRouter.kiloInfer(payload, abortController.signal);
       const content = response.choices?.[0]?.message?.content ?? "";
