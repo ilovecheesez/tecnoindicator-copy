@@ -55,8 +55,8 @@ export default async function handler(_req: Request): Promise<Response> {
     // Run all checks in parallel with the same abort signal
     // Each check has built-in timeout logic that respects the abort signal
     const [kiloStatus, tinyfishStatus, analyticsResult] = await Promise.all([
-      kiloRouter.getKiloStatus(abortController.signal),
-      tinyfishRouter.getTinyfishStatus(abortController.signal),
+      kiloRouter.getKiloStatus(abortController.signal, true),
+      tinyfishRouter.getTinyfishStatus(abortController.signal, true),
       (async () => {
         // Run global and regional analytics in PARALLEL
         const globalAnalyticsPromise = getGlobalAnalytics();

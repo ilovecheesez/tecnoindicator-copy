@@ -620,11 +620,34 @@ const result: KiloResponse = {
     throw lastError ?? new Error("No available Kilo Gateway key/model combinations");
   }
 
-  async getKiloStatus(abortSignal?: AbortSignal): Promise<KiloStatus> {
-    if (!this.initialized) {
+  async getKiloStatus(abortSignal?: AbortSignal, quick: boolean = false): Promise<KiloStatus> {
+    if (!quick && !this.initialized) {
       await this.initKiloRouter(abortSignal);
     } else if (this.initializing) {
       await this.initializing;
+    }
+
+    if (!this.initialized) {
+      // Quick mode: return basic status even if not initialized
+      const usableKeys = this.keyStates.filter(k => k.available && !k.rateLimited).length;
+      const rateLimitedKeys = this.keyStates
+        .filter(k => k.rateLimited)
+        .map((k) => k.keyIndex);
+      const globalRateLimited = this.keyStates.length > 0 &&
+        this.keyStates.every(k => k.rateLimited);
+
+      return {
+        available: false,
+        zeroCostModels: [],
+        defaultModel: DEFAULT_KILO_MODEL_ID,
+        activeModel: null,
+        configuredKeys: this.keyStates.length,
+        usableKeys,
+        rateLimitedKeys,
+        rateLimitedModels: [],
+        globalRateLimited,
+        catalogLastRefresh: this.catalogLastRefresh,
+      };
     }
 
     const zeroCostModels = this.modelCandidates

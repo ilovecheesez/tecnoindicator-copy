@@ -391,14 +391,31 @@ export class TinyFishRouter {
     return null;
   }
 
-  async getTinyfishStatus(abortSignal?: AbortSignal): Promise<{
+  async getTinyfishStatus(abortSignal?: AbortSignal, quick: boolean = false): Promise<{
     available: boolean;
     configuredKeys: number;
     usableKeys: number;
     rateLimitedKeys: number[];
   }> {
-    if (!this.initialized) {
+    if (!quick && !this.initialized) {
       await this.refreshTinyfishStatus(true, abortSignal);
+    } else if (this.initializing) {
+      await this.initializing;
+    }
+
+    if (!this.initialized) {
+      // Quick mode: return basic status even if not initialized
+      const usableKeys = this.keyStates.filter(k => k.available && !k.rateLimited).length;
+      const rateLimitedKeys = this.keyStates
+        .map((k, i) => (k.rateLimited ? i : -1))
+        .filter(i => i >= 0);
+
+      return {
+        available: false,
+        configuredKeys: this.keyStates.length,
+        usableKeys,
+        rateLimitedKeys,
+      };
     }
 
     return {
