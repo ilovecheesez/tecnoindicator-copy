@@ -1,4 +1,5 @@
 import { kiloRouter } from "./_shared/kiloRouter.js";
+import { tinyfishRouter } from "./_shared/tinyfishRouter.js";
 import { getGlobalAnalytics, getRegionalAnalytics } from "./_shared/deterministicAnalytics.js";
 import { FACTORS_CACHE_MS, SOLUTIONS_CACHE_MS } from "./_shared/http.js";
 import { getCache, setCache } from "./_shared/cache.js";
@@ -7,6 +8,44 @@ import { isRegion, type Region } from "./_shared/regions.js";
 import type { Factor, Solution, RegionId } from "./_shared/types.js";
 
 const MAX_SOLUTIONS = 3;
+
+const GLOBAL_QUERIES = [
+  "global oil market prices OPEC supply demand 2026",
+  "global electricity power prices renewable energy grid 2026",
+  "global water prices scarcity drought utilities 2026",
+];
+
+const REGION_QUERIES: Record<Region, string[]> = {
+  asia: [
+    "Asia oil market prices China India demand OPEC 2026",
+    "Asia electricity power prices renewables grid China India 2026",
+    "Asia water prices scarcity drought urbanization 2026",
+  ],
+  europe: [
+    "Europe oil market prices Brent Russian supply sanctions 2026",
+    "Europe electricity power prices carbon ETS renewables gas 2026",
+    "Europe water prices drought scarcity Alpine hydropower 2026",
+  ],
+  africa: [
+    "Africa oil market prices Nigeria Angola production exports 2026",
+    "Africa electricity power prices diesel gensets grid reliability 2026",
+    "Africa water prices drought scarcity Sahel utilities 2026",
+  ],
+  americas: [
+    "Americas oil market prices WTI shale LNG exports 2026",
+    "Americas electricity power prices hydro drought Henry Hub 2026",
+    "Americas water prices drought California Southwest utilities 2026",
+  ],
+  oceania: [
+    "Oceania oil market prices LNG import parity Australia 2026",
+    "Oceania electricity power prices NEM NZ wholesale drought 2026",
+    "Oceania water prices drought Sydney Melbourne utilities 2026",
+  ],
+};
+
+function recentMonth(): string {
+  return new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
 
 const SOLUTION_PROMPT = `You are a Senior Business Strategy Advisor for commodity-driven companies. Based on the following market analytics and dynamic factors, generate exactly 3 actionable solutions for business owners and executives to manage their logistics and business decisions better. Each solution should target a different strategic aspect: operational resilience, cost optimization, and strategic positioning.
 
@@ -90,20 +129,36 @@ export default async function handler(req: Request): Promise<Response> {
     const analytics = scope === "global" ? await getGlobalAnalytics() : await getRegionalAnalytics(scope as Region);
     const factorsCache = await getCache<Factor[]>(`dynamic-factors:${scope}`, FACTORS_CACHE_MS);
     const factors = factorsCache ?? [];
+    
+    // Use AbortController to abort the Kilo inference on timeout, so the
+    // underlying fetch is cancelled (not just timed out via Promise.race).
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 15000);
+    
+    // When the factors cache is empty, fetch fresh evidence from TinyFish
+    // instead of passing an empty array to Kilo.
+    let freshEvidence: any[] = [];
+    if (factors.length === 0) {
+      const queries = scope === "global" ? GLOBAL_QUERIES : REGION_QUERIES[scope as Region];
+      const searches = await Promise.all(
+        queries.map((q) =>
+          tinyfishRouter.tinyfishSearch(`${q} ${recentMonth()}`, { limit: 10, region: scope === "global" ? undefined : (scope as Region) }, abortController.signal),
+        ),
+      );
+      freshEvidence = searches
+        .flatMap((r) => r.results)
+        .slice(0, 15);
+    }
 
     const payload = {
       messages: [
         { role: "system", content: SOLUTION_PROMPT },
-        { role: "user", content: JSON.stringify({ analytics, factors, scope, region: isGlobal ? null : scope }) },
+        { role: "user", content: JSON.stringify({ analytics, factors, scope, region: isGlobal ? null : scope, evidence: freshEvidence }) },
       ],
       max_tokens: 2048,
       temperature: 0.25,
     };
 
-    // Use AbortController to abort the Kilo inference on timeout, so the
-    // underlying fetch is cancelled (not just timed out via Promise.race).
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 15000);
     try {
       const response = await kiloRouter.kiloInfer(payload, abortController.signal);
       const content = response.choices?.[0]?.message?.content ?? "";

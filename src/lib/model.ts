@@ -502,6 +502,15 @@ export const FACTORS: Factor[] = [
   },
 ];
 
+export type LivePricesResponse = {
+  oil: { price: number; unit: string; source: string; isLive: boolean };
+  electricity: { price: number; unit: string; source: string; isLive: boolean };
+  water: { price: number; unit: string; source: string; isLive: boolean };
+  asOf: string;
+  dataSource: string;
+  isLive: boolean;
+};
+
 /* ------------------------------------------------------------------ */
 /* Regional fallback factors (8 per region, 40 total)                 */
 /* ------------------------------------------------------------------ */
