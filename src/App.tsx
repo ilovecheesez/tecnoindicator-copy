@@ -156,7 +156,7 @@ export default function App() {
     const pollSolutions = async () => {
       try {
         const scope = region === "global" ? "global" : region;
-        const res = await fetch(`/api/solutions?scope=${scope}`);
+         const res = await fetch(`/api/solutions?region=${scope}`);
         if (res.ok) {
           const data = await res.json();
           if (active && Array.isArray(data.solutions)) {
