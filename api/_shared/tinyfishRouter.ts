@@ -399,8 +399,6 @@ export class TinyFishRouter {
   }> {
     if (!quick && !this.initialized) {
       await this.refreshTinyfishStatus(true, abortSignal);
-    } else if (this.initializing) {
-      await this.initializing;
     }
 
     if (!this.initialized) {
