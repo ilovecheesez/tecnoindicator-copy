@@ -89,9 +89,7 @@ export default function SolutionsSection({
 }: SolutionsSectionProps) {
   const allSolutions = useMemo(() => {
     if (globalSolutions.length > 0) return globalSolutions;
-<<<<<<< ours
     const factors = Object.values(dynamicFactors).flat();
->>>>>>> theirs
     return factors.slice(0, MAX_SOLUTIONS).map((f) => ({
       id: `solution-${f.id}`,
       title: f.name,
@@ -104,7 +102,7 @@ export default function SolutionsSection({
       updatedAt: f.updatedAt,
       scope: f.scope,
     }));
-  }, [globalSolutions, globalFactors, dynamicFactors]);
+  }, [globalSolutions, dynamicFactors]);
 
   return (
     <section id="solutions" className="relative scroll-mt-20 border-t border-line py-16 sm:py-20">

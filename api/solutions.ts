@@ -109,12 +109,12 @@ export default async function handler(req: Request): Promise<Response> {
       const content = response.choices?.[0]?.message?.content ?? "";
       const parsed = safeParseJson<{ solutions?: unknown[] }>(content);
 
-    const validRegions: RegionId[] = ["global", "asia", "europe", "africa", "americas", "oceania"];
+      const validRegions: RegionId[] = ["global", "asia", "europe", "africa", "americas", "oceania"];
 
-    const solutions: Solution[] = (parsed?.solutions ?? [])
-      .map((s: unknown) => buildSolution(s, scope, validRegions))
-      .filter((s): s is Solution => s !== null)
-      .slice(0, MAX_SOLUTIONS);
+      const solutions: Solution[] = (parsed?.solutions ?? [])
+        .map((s: unknown) => buildSolution(s, scope, validRegions))
+        .filter((s): s is Solution => s !== null)
+        .slice(0, MAX_SOLUTIONS);
 
       await setCache(cacheKey, solutions, SOLUTIONS_CACHE_MS);
       return Response.json({ solutions, scope, count: solutions.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
