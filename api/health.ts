@@ -46,10 +46,10 @@ interface HealthResponse {
 }
 
 export default async function handler(_req: Request): Promise<Response> {
-  // Global abort controller for the entire health check with 7s total budget
-  // Leaves 3s buffer for Vercel's 10s default timeout (or 23s buffer for 30s maxDuration)
+  // Global abort controller for the entire health check with 5s total budget
+  // Leaves 5s buffer for Vercel's 10s default timeout (or 25s buffer for 30s maxDuration)
   const abortController = new AbortController();
-  const totalTimeoutId = setTimeout(() => abortController.abort(), 7000);
+  const totalTimeoutId = setTimeout(() => abortController.abort(), 5000);
 
   try {
     // Run all checks in parallel with the same abort signal
@@ -78,7 +78,7 @@ export default async function handler(_req: Request): Promise<Response> {
                 )
               ),
               new Promise<{}>((_resolve, reject) =>
-                setTimeout(() => reject(new Error("Regional analytics timeout")), 5000)
+                setTimeout(() => reject(new Error("Regional analytics timeout")), 2000)
               )
             ]),
           ]);

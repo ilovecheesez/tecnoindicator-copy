@@ -126,18 +126,18 @@ export class KiloRouter {
       lastSuccessAt: null,
     }));
 
-    await this.refreshKiloModels(true, abortSignal);
+await this.refreshKiloModels(true, abortSignal);
 
     // Probe keys against eligible zero-cost models in PARALLEL with a timeout.
     // Sequential probing would cause Vercel function timeouts with many keys/models.
     const eligibleModels = this.modelCandidates.filter(m => m.zeroCostVerified && m.available && !m.rateLimited);
     if (eligibleModels.length > 0) {
-      // Combine the passed abort signal with our own 5s timeout
+      // Combine the passed abort signal with our 2s internal timeout for faster health checks
       const controller = new AbortController();
       const combinedSignal = abortSignal
         ? combineAbortSignals(abortSignal, controller.signal)
         : controller.signal;
-      const overallTimeout = setTimeout(() => controller.abort(), 5000);
+      const overallTimeout = setTimeout(() => controller.abort(), 2000);
       try {
         // For each key, probe against the FIRST eligible model only (one success is enough)
         // to minimize total probe time. Run all key probes in parallel.
@@ -178,12 +178,12 @@ export class KiloRouter {
       MODEL_CACHE_MS
     );
 
-    // Combine passed abort signal with our 5s internal timeout
+    // Combine passed abort signal with our 2s internal timeout for faster health checks
     const controller = new AbortController();
     const combinedSignal = abortSignal
       ? combineAbortSignals(abortSignal, controller.signal)
       : controller.signal;
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
 
     try {
       if (!force && cached && Date.now() - cached.timestamp < MODEL_CACHE_MS) {
