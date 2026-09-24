@@ -56,84 +56,86 @@ interface HealthResponse {
   };
 }
 
+// Abort timeout helper - aborts the signal after the given ms
+function withAbortTimeout(
+  ms: number,
+  abortSignal: AbortSignal
+): AbortSignal {
+  const controller = new AbortController();
+  const originalSignal = abortSignal;
+  const timeoutId = setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
 export default async function handler(_req: Request): Promise<Response> {
+  // Global abort controller for the entire health check with 7s total budget
+  // Leaves 3s buffer for Vercel's 10s default timeout (or 23s buffer for 30s maxDuration)
+  const abortController = new AbortController();
+  const totalTimeoutId = setTimeout(() => abortController.abort(), 7000);
+
   try {
-    // Run all checks in PARALLEL with per-check timeouts so the health endpoint
-    // never exceeds Vercel's 10s serverless function timeout.
-    // Total budget: 7s (leaves 3s buffer for serialization/Vercel overhead).
-
-    const kiloPromise = Promise.race([
-      kiloRouter.getKiloStatus(),
-      new Promise<KiloStatusLike>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Kilo status timeout")), 4000)
-      ),
-    ]).catch((err) => {
-      console.error("Kilo status error:", (err as Error).message ?? err);
-      return { available: false, usableKeys: 0, zeroCostModels: [] as string[] };
-    });
-
-    const tinyfishPromise = Promise.race([
-      tinyfishRouter.getTinyfishStatus(),
-      new Promise<TinyfishStatusLike>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Tinyfish status timeout")), 4000)
-      ),
-    ]).catch((err) => {
-      console.error("Tinyfish status error:", (err as Error).message ?? err);
-      return { available: false, usableKeys: 0 };
-    });
-
-    const analyticsPromise = Promise.race([
-      (async () => {
-        const globalAnalytics = await Promise.race([
-          getGlobalAnalytics(),
-          new Promise<{ timestamp: string | null }>((_resolve, reject) =>
-            setTimeout(() => reject(new Error("Global analytics timeout")), 3000)
-          ),
-        ]).catch(() => ({ timestamp: null as string | null }));
-
-        const regionalAnalytics: Record<Region, { lastFetch: string | null; success: boolean }> =
-          {} as Record<Region, { lastFetch: string | null; success: boolean }>;
-        for (const region of Object.keys(REGION_NAMES) as Region[]) {
-          try {
-            await Promise.race([
-              getRegionalAnalytics(region),
-              new Promise<void>(
-                (_resolve, reject) =>
-                  setTimeout(() => reject(new Error("Regional analytics timeout")), 2000)
-              ),
-            ]);
-            regionalAnalytics[region] = { lastFetch: new Date().toISOString(), success: true };
-          } catch {
-            regionalAnalytics[region] = { lastFetch: null, success: false };
-          }
-        }
-        return { globalAnalytics, regionalAnalytics };
-      })(),
-      new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Analytics timeout")), 6000)
-      ),
-    ]).catch((err) => {
-      console.error("Analytics error:", (err as Error).message ?? err);
-      return {
-        globalAnalytics: { timestamp: null as string | null },
-        regionalAnalytics: Object.fromEntries(
-          (Object.keys(REGION_NAMES) as Region[]).map((r) => [
-            r,
-            { lastFetch: null as string | null, success: false },
-          ])
-        ) as Record<Region, { lastFetch: string | null; success: boolean }>,
-      };
-    });
-
-    // All three run in parallel; longest individual timeout is 6s.
+    // Run all checks in parallel with the same abort signal
+    // Each check has built-in timeout logic that respects the abort signal
     const [kiloStatus, tinyfishStatus, analyticsResult] = await Promise.all([
-      kiloPromise,
-      tinyfishPromise,
-      analyticsPromise,
-    ]);
+      kiloRouter.getKiloStatus(abortController.signal),
+      tinyfishRouter.getTinyfishStatus(abortController.signal),
+      (async () => {
+        // Run global and regional analytics in PARALLEL
+        const globalAnalyticsPromise = getGlobalAnalytics();
+        const regionalAnalyticsPromises = Object.keys(REGION_NAMES).map(
+          (region) =>
+            getRegionalAnalytics(region as Region).then((analytics) => ({
+              region: region as Region,
+              result: analytics,
+            }))
+        );
 
-    const globalAnalytics = analyticsResult.globalAnalytics;
-    const regionalAnalytics = analyticsResult.regionalAnalytics;
+        try {
+          const [globalAnalytics, regionalResults] = await Promise.all([
+            globalAnalyticsPromise,
+            Promise.race([
+              Promise.all(reginalAnalyticsPromises).then((results) =>
+                Object.fromEntries(
+                  results.map(({ region, result }) => [region, result])
+                )
+              ),
+              new Promise<{}>((_resolve, reject) =>
+                setTimeout(() => reject(new Error("Regional analytics timeout")), 5000)
+              )
+            ]),
+          ]);
+
+          const regionalAnalytics = regionalResults as Record<
+            Region,
+            { lastFetch: string | null; success: boolean }
+          >;
+
+          // Build the proper structure
+          const result: Record<Region, { lastFetch: string | null; success: boolean }> =
+            {} as Record<Region, { lastFetch: string | null; success: boolean }>;
+          for (const region of Object.keys(REGION_NAMES) as Region[]) {
+            if (regionalAnalytics[region]) {
+              result[region] = {
+                lastFetch: new Date().toISOString(),
+                success: true,
+              };
+            } else {
+              result[region] = { lastFetch: null, success: false };
+            }
+          }
+
+          return { globalAnalytics, regionalAnalytics: result };
+        } catch (e) {
+          // Return null values on timeout/error
+          const result: Record<Region, { lastFetch: string | null; success: boolean }> =
+            {} as Record<Region, { lastFetch: string | null; success: boolean }>;
+          for (const region of Object.keys(REGION_NAMES) as Region[]) {
+            result[region] = { lastFetch: null, success: false };
+          }
+          return { globalAnalytics: { timestamp: null, fuelLevy: 0, electricityTariffAdjustmentIndex: 0, waterScarcityAdjustedPriceIndex: 0, dataSource: "", isLive: false }, regionalAnalytics: result };
+        }
+      })()
+    ]);
 
     const onlineModelConnected =
       kiloStatus.available &&
@@ -154,10 +156,10 @@ export default async function handler(_req: Request): Promise<Response> {
       onlineModelConnected,
       analytics: {
         global: {
-          lastFetch: globalAnalytics.timestamp,
-          success: !!globalAnalytics.timestamp,
+          lastFetch: analyticsResult.globalAnalytics.timestamp,
+          success: !!analyticsResult.globalAnalytics.timestamp,
         },
-        regional: regionalAnalytics,
+        regional: analyticsResult.regionalAnalytics,
       },
       dynamicFactors: {
         global: {
@@ -197,5 +199,7 @@ export default async function handler(_req: Request): Promise<Response> {
       kiloGateway: { available: false, usableKeys: 0 },
       tinyfish: { available: false, usableKeys: 0 },
     }, { status: 200 });
+  } finally {
+    clearTimeout(totalTimeoutId);
   }
 }

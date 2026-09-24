@@ -12,6 +12,20 @@ import {
 import { getCache, setCache } from "./cache.js";
 import { KiloResponse, KiloStatus } from "./types.js";
 
+function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller.signal;
+    }
+    signal.addEventListener("abort", () => {
+      controller.abort(signal.reason);
+    }, { once: true });
+  }
+  return controller.signal;
+}
+
 function makeId(prefix = "chatcmpl"): string {
   try {
     const arr = crypto.getRandomValues(new Uint32Array(3));
@@ -78,17 +92,17 @@ export class KiloRouter {
   private initializing: Promise<void> | null = null;
   private catalogLastRefresh: string | null = null;
 
-  async initKiloRouter(): Promise<void> {
+  async initKiloRouter(abortSignal?: AbortSignal): Promise<void> {
     if (this.initialized) return;
     if (this.initializing) {
       await this.initializing;
       return;
     }
-    this.initializing = this._doInit();
+    this.initializing = this._doInit(abortSignal);
     await this.initializing;
   }
 
-  private async _doInit(): Promise<void> {
+  private async _doInit(abortSignal?: AbortSignal): Promise<void> {
     const keys = readConfiguredKeys(KILO_KEY_ENV_NAMES);
     if (keys.length === 0) {
       this.keyStates = [];
@@ -112,13 +126,17 @@ export class KiloRouter {
       lastSuccessAt: null,
     }));
 
-    await this.refreshKiloModels(true);
+    await this.refreshKiloModels(true, abortSignal);
 
     // Probe keys against eligible zero-cost models in PARALLEL with a timeout.
     // Sequential probing would cause Vercel function timeouts with many keys/models.
     const eligibleModels = this.modelCandidates.filter(m => m.zeroCostVerified && m.available && !m.rateLimited);
     if (eligibleModels.length > 0) {
+      // Combine the passed abort signal with our own 5s timeout
       const controller = new AbortController();
+      const combinedSignal = abortSignal
+        ? combineAbortSignals(abortSignal, controller.signal)
+        : controller.signal;
       const overallTimeout = setTimeout(() => controller.abort(), 5000);
       try {
         // For each key, probe against the FIRST eligible model only (one success is enough)
@@ -126,7 +144,7 @@ export class KiloRouter {
         const probeResults = await Promise.all(
           this.keyStates.map(async (keyState) => {
             try {
-              return await this.probeKeyModel(keyState, eligibleModels[0], controller.signal);
+              return await this.probeKeyModel(keyState, eligibleModels[0], combinedSignal);
             } catch {
               return { success: false };
             }
@@ -154,43 +172,58 @@ export class KiloRouter {
     this.initializing = null;
   }
 
-  async refreshKiloModels(force: boolean = false): Promise<void> {
+  async refreshKiloModels(force: boolean = false, abortSignal?: AbortSignal): Promise<void> {
     const cached = await getCache<{ models: KiloModelCatalogEntry[]; timestamp: number }>(
       "kilo:model-catalog",
       MODEL_CACHE_MS
     );
 
-    if (!force && cached && Date.now() - cached.timestamp < MODEL_CACHE_MS) {
-      this.modelCandidates = this.buildCandidatePool(cached.models);
-      return;
-    }
+    // Combine passed abort signal with our 5s internal timeout
+    const controller = new AbortController();
+    const combinedSignal = abortSignal
+      ? combineAbortSignals(abortSignal, controller.signal)
+      : controller.signal;
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     try {
-      const authKey = this.keyStates[0]?.envName ? (process.env[this.keyStates[0].envName] ?? "") : "";
-      const response = await fetch(KILO_GATEWAY_MODELS_URL, {
-        headers: {
-          Accept: "application/json",
-          ...(authKey ? { Authorization: `Bearer ${authKey}` } : {}),
-        },
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Model catalog request failed with status ${response.status}`);
+      if (!force && cached && Date.now() - cached.timestamp < MODEL_CACHE_MS) {
+        this.modelCandidates = this.buildCandidatePool(cached.models);
+        return;
       }
 
-      const data = await response.json();
-      const models: KiloModelCatalogEntry[] = Array.isArray(data.data)
-        ? data.data
-        : Array.isArray(data)
-          ? data
-          : [];
+      try {
+        const authKey = this.keyStates[0]?.envName ? (process.env[this.keyStates[0].envName] ?? "") : "";
+        if (abortSignal?.aborted) {
+          throw new Error("Kilo model catalog refresh aborted");
+        }
+        const response = await fetch(KILO_GATEWAY_MODELS_URL, {
+          headers: {
+            Accept: "application/json",
+            ...(authKey ? { Authorization: `Bearer ${authKey}` } : {}),
+          },
+          signal: combinedSignal,
+        });
 
-      this.modelCandidates = this.buildCandidatePool(models);
-      this.catalogLastRefresh = new Date().toISOString();
-      await setCache("kilo:model-catalog", { models, timestamp: Date.now() }, MODEL_CACHE_MS);
-    } catch (error) {
-      console.error("Kilo model catalog refresh failed:", error);
+        if (!response.ok) {
+          throw new Error(`Model catalog request failed with status ${response.status}`);
+        }
+
+        const data = await response.json();
+        const models: KiloModelCatalogEntry[] = Array.isArray(data.data)
+          ? data.data
+          : Array.isArray(data)
+            ? data
+            : [];
+
+        this.modelCandidates = this.buildCandidatePool(models);
+        this.catalogLastRefresh = new Date().toISOString();
+        await setCache("kilo:model-catalog", { models, timestamp: Date.now() }, MODEL_CACHE_MS);
+      } catch (error) {
+        console.error("Kilo model catalog refresh failed:", error);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      controller.abort();
     }
   }
 
@@ -587,9 +620,9 @@ const result: KiloResponse = {
     throw lastError ?? new Error("No available Kilo Gateway key/model combinations");
   }
 
-  async getKiloStatus(): Promise<KiloStatus> {
+  async getKiloStatus(abortSignal?: AbortSignal): Promise<KiloStatus> {
     if (!this.initialized) {
-      await this.initKiloRouter();
+      await this.initKiloRouter(abortSignal);
     } else if (this.initializing) {
       await this.initializing;
     }
