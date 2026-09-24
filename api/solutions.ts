@@ -100,7 +100,13 @@ export default async function handler(req: Request): Promise<Response> {
       temperature: 0.25,
     };
 
-    const response = await kiloRouter.kiloInfer(payload);
+    // Wrap Kilo inference with a timeout to prevent Vercel 504 on cold starts
+    const response = await Promise.race([
+      kiloRouter.kiloInfer(payload),
+      new Promise<unknown>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("Solution generation timeout")), 8000)
+      ) as Promise<Awaited<ReturnType<typeof kiloRouter["kiloInfer"]>>>,
+    ]);
     const content = response.choices?.[0]?.message?.content ?? "";
     const parsed = safeParseJson<{ solutions?: unknown[] }>(content);
 

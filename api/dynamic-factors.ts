@@ -309,7 +309,13 @@ export default async function handler(req: Request): Promise<Response> {
         return Response.json({ factors: cached, scope, count: cached.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
       }
     }
-    const factors = await runFactorAnalysis(scope, isGlobal ? null : scope as Region);
+    // Wrap factor analysis with a timeout to prevent Vercel 504 on cold starts
+    const factors = await Promise.race([
+      runFactorAnalysis(scope, isGlobal ? null : scope as Region),
+      new Promise<Factor[]>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("Factor analysis timeout")), 8000)
+      ),
+    ]);
     await setCache(cacheKey, factors, FACTORS_CACHE_MS);
     return Response.json({ factors, scope, count: factors.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
   } catch (error) {
