@@ -219,7 +219,7 @@ async function runFactorAnalysis(scope: Region, region: Region, abortController?
   const analytics = await getRegionalAnalytics(region);
   const existing = buildFallbackFactors(scope, region);
   const searches = await Promise.all(
-    REGION_QUERIES[region].map((q) =>
+REGION_QUERIES[region].map((q) =>
       tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region }, abortController?.signal),
     ),
   );

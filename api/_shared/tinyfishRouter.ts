@@ -2,6 +2,7 @@ import {
   TINYFISH_KEY_ENV_NAMES,
   readConfiguredKeys,
   sanitizeUrl,
+  SEARCH_CACHE_MS,
 } from "./http.js";
 import { getCache, setCache } from "./cache.js";
 import type { Region } from "./regions.js";
@@ -199,7 +200,7 @@ export class TinyFishRouter {
     }
 
     const cacheKey = `tinyfish:search:${query}:${options.region ?? "global"}`;
-    const cached = await getCache<TinyFishSearchResponse>(cacheKey, 10 * 60 * 1000);
+    const cached = await getCache<TinyFishSearchResponse>(cacheKey, SEARCH_CACHE_MS);
     if (cached) return cached;
 
     let keyState = this.selectKey();
@@ -257,7 +258,7 @@ export class TinyFishRouter {
             if (Number.isFinite(parsed)) keyState.rateLimitRemaining = parsed;
           }
 
-          await setCache(cacheKey, result, 10 * 60 * 1000);
+          await setCache(cacheKey, result, SEARCH_CACHE_MS);
           return result;
         }
 
@@ -356,7 +357,7 @@ export class TinyFishRouter {
           keyState.lastSuccessAt = keyState.lastCheckedAt;
           this.parseRateLimitHeaders(keyState, response.headers);
 
-          await setCache(cacheKey, result, 10 * 60 * 1000);
+          await setCache(cacheKey, result, SEARCH_CACHE_MS);
           return result;
         }
 

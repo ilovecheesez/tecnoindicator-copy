@@ -77,6 +77,7 @@ function SolutionCard({
 }
 
 interface SolutionsSectionProps {
+  globalFactors: import("../lib/model").Factor[];
   dynamicFactors: Record<string, import("../lib/model").Factor[]>;
   healthStatus: "Initializing AI" | "Online Model Connected" | "Offline Model";
   globalSolutions: Solution[];
