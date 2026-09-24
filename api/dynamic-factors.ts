@@ -232,13 +232,13 @@ function buildFallbackFactors(scope: "global" | Region, region: Region | null): 
   }));
 }
 
-async function runFactorAnalysis(scope: "global" | Region, region: Region | null): Promise<Factor[]> {
+async function runFactorAnalysis(scope: "global" | Region, region: Region | null, abortController?: AbortController): Promise<Factor[]> {
   const analytics = scope === "global" ? await getGlobalAnalytics() : await getRegionalAnalytics(region!);
   const existing = buildFallbackFactors(scope, region);
   const queries = scope === "global" ? GLOBAL_QUERIES : REGION_QUERIES[region ?? "asia"];
   const searches = await Promise.all(
     queries.map((q) =>
-      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region: region ?? undefined }),
+      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region: region ?? undefined }, abortController?.signal),
     ),
   );
   const candidates = searches
@@ -250,7 +250,7 @@ async function runFactorAnalysis(scope: "global" | Region, region: Region | null
   const excerpts = await Promise.all(
     candidates.map(async (r) => {
       try {
-        const scraped = await tinyfishRouter.tinyfishScrape(r.url);
+        const scraped = await tinyfishRouter.tinyfishScrape(r.url, abortController?.signal);
         return scraped
           ? { ...r, text: scraped.text, title: scraped.title || r.title }
           : r;
@@ -280,7 +280,7 @@ async function runFactorAnalysis(scope: "global" | Region, region: Region | null
     max_tokens: 4096,
     temperature: 0.2,
   };
-  const response = await kiloRouter.kiloInfer(payload);
+  const response = await kiloRouter.kiloInfer(payload, abortController?.signal);
   const content = response.choices?.[0]?.message?.content ?? "";
   const parsed = safeParseJson<{ factors?: unknown[] }>(content);
   if (!parsed?.factors) return buildFallbackFactors(scope, region);
@@ -309,15 +309,18 @@ export default async function handler(req: Request): Promise<Response> {
         return Response.json({ factors: cached, scope, count: cached.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
       }
     }
-    // Wrap factor analysis with a timeout to prevent Vercel 504 on cold starts
-    const factors = await Promise.race([
-      runFactorAnalysis(scope, isGlobal ? null : scope as Region),
-      new Promise<Factor[]>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Factor analysis timeout")), 8000)
-      ),
-    ]);
-    await setCache(cacheKey, factors, FACTORS_CACHE_MS);
-    return Response.json({ factors, scope, count: factors.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+    // Wrap factor analysis with an AbortController + timeout so that when
+    // the timeout fires, all underlying fetch calls are actually aborted
+    // (Promise.race alone doesn't cancel background operations).
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 6000);
+    try {
+      const factors = await runFactorAnalysis(scope, isGlobal ? null : scope as Region, abortController);
+      await setCache(cacheKey, factors, FACTORS_CACHE_MS);
+      return Response.json({ factors, scope, count: factors.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch (error) {
     console.error("Dynamic factors error:", sanitizeError(String(error)));
     const scope = urlSafeScope(new URL(req.url));

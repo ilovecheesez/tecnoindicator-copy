@@ -215,12 +215,12 @@ function buildFallbackFactors(scope: Region, region: Region): Factor[] {
   }));
 }
 
-async function runFactorAnalysis(scope: Region, region: Region): Promise<Factor[]> {
+async function runFactorAnalysis(scope: Region, region: Region, abortController?: AbortController): Promise<Factor[]> {
   const analytics = await getRegionalAnalytics(region);
   const existing = buildFallbackFactors(scope, region);
   const searches = await Promise.all(
     REGION_QUERIES[region].map((q) =>
-      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region }),
+      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region }, abortController?.signal),
     ),
   );
   const candidates = searches
@@ -232,7 +232,7 @@ async function runFactorAnalysis(scope: Region, region: Region): Promise<Factor[
   const excerpts = await Promise.all(
     candidates.map(async (r) => {
       try {
-        const scraped = await tinyfishRouter.tinyfishScrape(r.url);
+        const scraped = await tinyfishRouter.tinyfishScrape(r.url, abortController?.signal);
         return scraped ? { ...r, text: scraped.text, title: scraped.title || r.title } : r;
       } catch {
         return r;
@@ -256,7 +256,7 @@ async function runFactorAnalysis(scope: Region, region: Region): Promise<Factor[
     max_tokens: 4096,
     temperature: 0.2,
   };
-  const response = await kiloRouter.kiloInfer(payload);
+  const response = await kiloRouter.kiloInfer(payload, abortController?.signal);
   const content = response.choices?.[0]?.message?.content ?? "";
   const parsed = safeParseJson<{ factors?: unknown[] }>(content);
   if (!parsed?.factors) return buildFallbackFactors(scope, region);
@@ -284,15 +284,17 @@ export default async function handler(req: Request): Promise<Response> {
         return Response.json({ factors: cached, scope: region, count: cached.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
       }
     }
-    // Wrap factor analysis with a timeout to prevent Vercel 504 on cold starts
-    const factors = await Promise.race([
-      runFactorAnalysis(region, region),
-      new Promise<Factor[]>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Regional factor analysis timeout")), 8000)
-      ),
-    ]);
-    await setCache(cacheKey, factors, FACTORS_CACHE_MS);
-    return Response.json({ factors, scope: region, count: factors.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+    // Use AbortController to abort factor analysis on timeout, so the
+    // underlying fetch calls are cancelled (not just timed out via Promise.race).
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 6000);
+    try {
+      const factors = await runFactorAnalysis(region, region, abortController);
+      await setCache(cacheKey, factors, FACTORS_CACHE_MS);
+      return Response.json({ factors, scope: region, count: factors.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch (error) {
     console.error("Regional factors error:", sanitizeError(String(error)));
     const regionParam = new URL(req.url).searchParams.get("region");

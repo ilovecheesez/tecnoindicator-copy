@@ -174,7 +174,8 @@ export class TinyFishRouter {
 
   async tinyfishSearch(
     query: string,
-    options: { limit?: number; region?: Region } = {}
+    options: { limit?: number; region?: Region } = {},
+    abortSignal?: AbortSignal
   ): Promise<TinyFishSearchResponse> {
     if (!this.initialized) {
       await this.refreshTinyfishStatus(true);
@@ -204,12 +205,12 @@ export class TinyFishRouter {
         const region = options.region ?? "global";
         const regionPrefix = region !== "global" ? `[${region}] ` : "";
 
-        const response = await fetch(buildSearchUrl(`${regionPrefix}${query}`, options.limit ?? 10), {
-          headers: {
-            "X-API-Key": testKey,
-          },
-          signal: AbortSignal.timeout(10000),
-        });
+         const response = await fetch(buildSearchUrl(`${regionPrefix}${query}`, options.limit ?? 10), {
+           headers: {
+             "X-API-Key": testKey,
+           },
+           signal: abortSignal ?? AbortSignal.timeout(10000),
+         });
 
         const status = response.status;
 
@@ -275,7 +276,7 @@ export class TinyFishRouter {
     return { results: [], total: 0, keyIndex: -1 };
   }
 
-  async tinyfishScrape(url: string): Promise<ScrapedContent | null> {
+  async tinyfishScrape(url: string, abortSignal?: AbortSignal): Promise<ScrapedContent | null> {
     if (!this.initialized) {
       await this.refreshTinyfishStatus(true);
     }
@@ -312,7 +313,7 @@ export class TinyFishRouter {
           body: JSON.stringify({
             urls: [safeUrl],
           }),
-          signal: AbortSignal.timeout(10000),
+          signal: abortSignal ?? AbortSignal.timeout(10000),
         });
 
         const status = response.status;

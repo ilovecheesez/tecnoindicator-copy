@@ -414,7 +414,7 @@ export class KiloRouter {
     return null;
   }
 
-  async kiloInfer(payload: KiloInferPayload): Promise<KiloResponse> {
+  async kiloInfer(payload: KiloInferPayload, abortSignal?: AbortSignal): Promise<KiloResponse> {
     if (!this.initialized) {
       await this.initKiloRouter();
     } else if (this.initializing) {
@@ -466,7 +466,7 @@ export class KiloRouter {
               temperature: payload.temperature ?? 0.7,
               response_format: payload.response_format ?? undefined,
             }),
-            signal: AbortSignal.timeout(15000),
+            signal: abortSignal ?? AbortSignal.timeout(15000),
           });
 
           const status = response.status;

@@ -100,25 +100,27 @@ export default async function handler(req: Request): Promise<Response> {
       temperature: 0.25,
     };
 
-    // Wrap Kilo inference with a timeout to prevent Vercel 504 on cold starts
-    const response = await Promise.race([
-      kiloRouter.kiloInfer(payload),
-      new Promise<unknown>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Solution generation timeout")), 8000)
-      ) as Promise<Awaited<ReturnType<typeof kiloRouter["kiloInfer"]>>>,
-    ]);
-    const content = response.choices?.[0]?.message?.content ?? "";
-    const parsed = safeParseJson<{ solutions?: unknown[] }>(content);
+    // Use AbortController to abort the Kilo inference on timeout, so the
+    // underlying fetch is cancelled (not just timed out via Promise.race).
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 6000);
+    try {
+      const response = await kiloRouter.kiloInfer(payload, abortController.signal);
+      const content = response.choices?.[0]?.message?.content ?? "";
+      const parsed = safeParseJson<{ solutions?: unknown[] }>(content);
 
-    const validRegions: RegionId[] = ["global", "asia", "europe", "africa", "americas", "oceania"];
+      const validRegions: RegionId[] = ["global", "asia", "europe", "africa", "americas", "oceania"];
 
-    const solutions: Solution[] = (parsed?.solutions ?? [])
-      .map((s: unknown) => buildSolution(s, scope, validRegions))
-      .filter((s): s is Solution => s !== null)
-      .slice(0, MAX_SOLUTIONS);
+      const solutions: Solution[] = (parsed?.solutions ?? [])
+        .map((s: unknown) => buildSolution(s, scope, validRegions))
+        .filter((s): s is Solution => s !== null)
+        .slice(0, MAX_SOLUTIONS);
 
-    await setCache(cacheKey, solutions, SOLUTIONS_CACHE_MS);
-    return Response.json({ solutions, scope, count: solutions.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+      await setCache(cacheKey, solutions, SOLUTIONS_CACHE_MS);
+      return Response.json({ solutions, scope, count: solutions.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch (error) {
     console.error("Solutions error:", error);
     return Response.json({ solutions: [], scope: "global" as RegionId, count: 0, aiCurated: false, cacheKey: "solutions:error", updatedAt: new Date().toISOString(), error: "Solutions temporarily unavailable" }, { status: 200 });
