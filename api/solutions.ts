@@ -109,7 +109,16 @@ export default async function handler(req: Request): Promise<Response> {
       const content = response.choices?.[0]?.message?.content ?? "";
       const parsed = safeParseJson<{ solutions?: unknown[] }>(content);
 
+<<<<<<< ours
       const validRegions: RegionId[] = ["global", "asia", "europe", "africa", "americas", "oceania"];
+=======
+    const validRegions: RegionId[] = ["global", "asia", "europe", "africa", "americas", "oceania"];
+
+    const solutions: Solution[] = (parsed?.solutions ?? [])
+      .map((s: unknown) => buildSolution(s, scope, validRegions))
+      .filter((s): s is Solution => s !== null)
+      .slice(0, MAX_SOLUTIONS);
+>>>>>>> theirs
 
       const solutions: Solution[] = (parsed?.solutions ?? [])
         .map((s: unknown) => buildSolution(s, scope, validRegions))
