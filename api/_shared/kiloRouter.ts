@@ -471,6 +471,11 @@ await this.refreshKiloModels(true, abortSignal);
       .map((_m, i) => i);
 
     if (keys.length === 0 || models.length === 0) {
+      const availableKeys = this.keyStates.filter(k => k.available && !k.rateLimited);
+      const configuredKeys = this.keyStates.filter(k => k.keyIndex !== undefined);
+      if (availableKeys.length > 0 && configuredKeys.length > 0) {
+        throw new Error("No zero-cost Kilo Gateway models available — all configured models require payment");
+      }
       throw new Error("No available Kilo Gateway key/model combinations");
     }
 

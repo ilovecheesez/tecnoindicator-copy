@@ -305,20 +305,17 @@ export default async function handler(req: Request): Promise<Response> {
     }
     const cacheKey = `dynamic-factors:${scope}`;
     if (!force) {
-      const cached = await getCache<Factor[]>(cacheKey, FACTORS_CACHE_MS);
+      const cached = await getCache<{ factors: Factor[]; aiCurated: boolean }>(cacheKey, FACTORS_CACHE_MS);
       if (cached) {
-        return Response.json({ factors: cached, scope, count: cached.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+        return Response.json({ factors: cached.factors, scope, count: cached.factors.length, aiCurated: cached.aiCurated, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
       }
     }
-    // Wrap factor analysis with an AbortController + timeout so that when
-    // the timeout fires, all underlying fetch calls are actually aborted
-    // (Promise.race alone doesn't cancel background operations).
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), 15000);
     try {
-      const factors = await runFactorAnalysis(scope, isGlobal ? null : scope as Region, abortController);
-      await setCache(cacheKey, factors, FACTORS_CACHE_MS);
-      return Response.json({ factors, scope, count: factors.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+      const result = await runFactorAnalysis(scope, isGlobal ? null : scope as Region, abortController);
+      await setCache(cacheKey, { factors: result.factors, aiCurated: result.aiCurated }, FACTORS_CACHE_MS);
+      return Response.json({ factors: result.factors, scope, count: result.factors.length, aiCurated: result.aiCurated, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
     } finally {
       clearTimeout(timeoutId);
     }

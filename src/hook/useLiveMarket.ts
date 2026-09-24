@@ -11,6 +11,7 @@ function getDefaultPrices(): Record<CommodityId, number> {
 
 export interface UseLiveMarketReturn {
   prices: Record<CommodityId, number>;
+  deltas: Record<CommodityId, number>;
   jitter: number;
   lastUpdated: Date;
   waterLive: LiveWaterQuote | null;
@@ -24,13 +25,15 @@ export interface UseLiveMarketReturn {
 
 export function useLiveMarket(): UseLiveMarketReturn {
   const [prices, setPrices] = useState<Record<CommodityId, number>>(getDefaultPrices);
+  const [deltas, setDeltas] = useState<Record<CommodityId, number>>({ oil: 0, electricity: 0, water: 0 });
   const [jitter, setJitter] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(() => new Date());
-  const [waterLive] = useState<LiveWaterQuote | null>(null);
-  const [waterFetching] = useState(false);
+  const [waterLive, setWaterLive] = useState<LiveWaterQuote | null>(null);
+  const [waterFetching, setWaterFetching] = useState(false);
   const [isLive, setIsLive] = useState(true);
   const [streaming, setStreaming] = useState(true);
   const tickRef = useRef<number | null>(null);
+  const prevPricesRef = useRef<Record<CommodityId, number>>(getDefaultPrices());
 
   // Fetch prices from API
   const fetchPrices = useCallback(async (force = false) => {
@@ -39,11 +42,19 @@ export function useLiveMarket(): UseLiveMarketReturn {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setPrices({
+      const newPrices = {
         oil: data.oil.price,
         electricity: data.electricity.price,
         water: data.water.price,
+      };
+      // Compute real deltas from previous prices
+      setDeltas({
+        oil: (newPrices.oil - prevPricesRef.current.oil) / prevPricesRef.current.oil,
+        electricity: (newPrices.electricity - prevPricesRef.current.electricity) / prevPricesRef.current.electricity,
+        water: (newPrices.water - prevPricesRef.current.water) / prevPricesRef.current.water,
       });
+      prevPricesRef.current = newPrices;
+      setPrices(newPrices);
       setIsLive(data.isLive);
       setLastUpdated(new Date(data.asOf));
     } catch {
@@ -57,10 +68,39 @@ export function useLiveMarket(): UseLiveMarketReturn {
     void fetchPrices(true);
   }, [fetchPrices]);
 
-  // Water fetch kept for backward compatibility - now a no-op since water comes from API
+  // Fetch live water price from the API with force=true
   const fetchWater = useCallback(async () => {
-    // No-op: water prices now come from /api/prices endpoint
-    // Keeping function signature for backward compatibility
+    setWaterFetching(true);
+    try {
+      const res = await fetch("/api/prices?force=true");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const newPrices = {
+        oil: data.oil.price,
+        electricity: data.electricity.price,
+        water: data.water.price,
+      };
+      // Compute real deltas from previous prices
+      setDeltas({
+        oil: (newPrices.oil - prevPricesRef.current.oil) / prevPricesRef.current.oil,
+        electricity: (newPrices.electricity - prevPricesRef.current.electricity) / prevPricesRef.current.electricity,
+        water: (newPrices.water - prevPricesRef.current.water) / prevPricesRef.current.water,
+      });
+      prevPricesRef.current = newPrices;
+      setPrices(newPrices);
+      setWaterLive({
+        price: data.water.price,
+        asOf: new Date(data.asOf).toLocaleTimeString("en-GB", { hour12: false }),
+        source: data.water.source || data.dataSource,
+        range: data.water.isLive ? "Live feed" : "Static benchmark",
+      });
+      setIsLive(data.isLive);
+      setLastUpdated(new Date(data.asOf));
+    } catch {
+      setWaterLive(null);
+    } finally {
+      setWaterFetching(false);
+    }
   }, []);
 
   const toggleLive = useCallback(() => {
@@ -118,6 +158,7 @@ export function useLiveMarket(): UseLiveMarketReturn {
 
   return {
     prices,
+    deltas,
     jitter,
     lastUpdated,
     waterLive,

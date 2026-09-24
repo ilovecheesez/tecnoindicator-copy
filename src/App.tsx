@@ -34,6 +34,7 @@ export default function App() {
 
   const {
     prices,
+    deltas,
     jitter,
     lastUpdated,
     waterLive,
@@ -174,7 +175,7 @@ export default function App() {
     <div className="min-h-screen bg-base font-sans text-slate-200 antialiased">
       <Navbar />
       <main>
-        <Hero prices={prices} />
+         <Hero prices={prices} deltas={deltas} />
         <ForecastTool
           horizon={horizon}
           onHorizon={setHorizon}
