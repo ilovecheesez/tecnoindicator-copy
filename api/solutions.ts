@@ -8,6 +8,7 @@ import { isRegion, type Region } from "./_shared/regions.js";
 import type { Factor, Solution, RegionId } from "./_shared/types.js";
 
 const MAX_SOLUTIONS = 3;
+const EVIDENCE_CACHE_MS = 30_000;
 
 const GLOBAL_QUERIES = [
   "global oil market prices OPEC supply demand 2026",
@@ -47,7 +48,7 @@ function recentMonth(): string {
   return new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-const SOLUTION_PROMPT = `You are a Senior Business Strategy Advisor for commodity-driven companies. Based on the following market analytics and dynamic factors, generate exactly 3 actionable solutions for business owners and executives to manage their logistics and business decisions better. Each solution should target a different strategic aspect: operational resilience, cost optimization, and strategic positioning.
+const SOLUTION_PROMPT = `You are a Senior Business Strategy Advisor for commodity-driven companies. Based on the following market analytics, dynamic factors, and fresh web evidence, generate exactly 3 actionable solutions for business owners and executives to manage their logistics and business decisions better. Each solution should target a different strategic aspect: operational resilience, cost optimization, and strategic positioning.
 
 Return strict JSON only with this schema:
 {
@@ -64,7 +65,7 @@ Return strict JSON only with this schema:
   ]
 }
 
-Use only the supplied analytics, factors, and source URLs. Do not invent sources or facts.`;
+Use only the supplied analytics, factors, and fresh web evidence with source URLs. Cite sources by including the URL in the summary when referencing specific data points. Do not invent sources or facts.`;
 
 function isValidRegionId(value: string): value is RegionId {
   return value === "global" || isRegion(value);
@@ -110,6 +111,29 @@ function buildSolution(s: unknown, scope: RegionId, validRegions: RegionId[]): S
   };
 }
 
+async function fetchFreshEvidence(scope: RegionId, abortSignal: AbortSignal): Promise<any[]> {
+  const evidenceCacheKey = `solutions:evidence:${scope}`;
+  const cached = await getCache<any[]>(evidenceCacheKey, EVIDENCE_CACHE_MS);
+  if (cached) return cached;
+
+  const queries = scope === "global" ? GLOBAL_QUERIES : REGION_QUERIES[scope as Region];
+  try {
+    const searches = await Promise.all(
+      queries.map((q) =>
+        tinyfishRouter.tinyfishSearch(`${q} ${recentMonth()}`, { limit: 10, region: scope === "global" ? undefined : (scope as Region) }, abortSignal),
+      ),
+    );
+    const freshEvidence = searches
+      .flatMap((r) => r.results)
+      .slice(0, 15);
+    await setCache(evidenceCacheKey, freshEvidence, EVIDENCE_CACHE_MS);
+    return freshEvidence;
+  } catch (error) {
+    console.error("TinyFish evidence fetch failed:", error);
+    return [];
+  }
+}
+
 export default async function handler(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
@@ -129,25 +153,16 @@ export default async function handler(req: Request): Promise<Response> {
     const analytics = scope === "global" ? await getGlobalAnalytics() : await getRegionalAnalytics(scope as Region);
     const factorsCache = await getCache<Factor[]>(`dynamic-factors:${scope}`, FACTORS_CACHE_MS);
     const factors = factorsCache ?? [];
-    
-    // Use AbortController to abort the Kilo inference on timeout, so the
-    // underlying fetch is cancelled (not just timed out via Promise.race).
+
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), 15000);
-    
-    // When the factors cache is empty, fetch fresh evidence from TinyFish
-    // instead of passing an empty array to Kilo.
+
     let freshEvidence: any[] = [];
-    if (factors.length === 0) {
-      const queries = scope === "global" ? GLOBAL_QUERIES : REGION_QUERIES[scope as Region];
-      const searches = await Promise.all(
-        queries.map((q) =>
-          tinyfishRouter.tinyfishSearch(`${q} ${recentMonth()}`, { limit: 10, region: scope === "global" ? undefined : (scope as Region) }, abortController.signal),
-        ),
-      );
-      freshEvidence = searches
-        .flatMap((r) => r.results)
-        .slice(0, 15);
+    try {
+      freshEvidence = await fetchFreshEvidence(scope, abortController.signal);
+    } catch (error) {
+      console.error("fetchFreshEvidence error:", error);
+      freshEvidence = [];
     }
 
     const payload = {
