@@ -58,11 +58,14 @@ interface HealthResponse {
 
 export default async function handler(_req: Request): Promise<Response> {
   try {
-    // Wrap each call with a timeout so the health endpoint never exceeds Vercel's 10s limit
+    // Run all checks in PARALLEL with per-check timeouts so the health endpoint
+    // never exceeds Vercel's 10s serverless function timeout.
+    // Total budget: 7s (leaves 3s buffer for serialization/Vercel overhead).
+
     const kiloPromise = Promise.race([
       kiloRouter.getKiloStatus(),
       new Promise<KiloStatusLike>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Kilo status timeout")), 5000)
+        setTimeout(() => reject(new Error("Kilo status timeout")), 4000)
       ),
     ]).catch((err) => {
       console.error("Kilo status error:", (err as Error).message ?? err);
@@ -72,33 +75,32 @@ export default async function handler(_req: Request): Promise<Response> {
     const tinyfishPromise = Promise.race([
       tinyfishRouter.getTinyfishStatus(),
       new Promise<TinyfishStatusLike>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Tinyfish status timeout")), 5000)
+        setTimeout(() => reject(new Error("Tinyfish status timeout")), 4000)
       ),
     ]).catch((err) => {
       console.error("Tinyfish status error:", (err as Error).message ?? err);
       return { available: false, usableKeys: 0 };
     });
 
-    const [kiloStatus, tinyfishStatus] = await Promise.all([kiloPromise, tinyfishPromise]);
-
-    // Analytics with per-region timeout (3s each), overall 8s timeout
     const analyticsPromise = Promise.race([
       (async () => {
         const globalAnalytics = await Promise.race([
           getGlobalAnalytics(),
-          new Promise<{ timestamp: string }>((_resolve, reject) =>
-            setTimeout(() => reject(new Error("Global analytics timeout")), 5000)
+          new Promise<{ timestamp: string | null }>((_resolve, reject) =>
+            setTimeout(() => reject(new Error("Global analytics timeout")), 3000)
           ),
-        ]);
-        const regionalAnalytics: Record<Region, { lastFetch: string | null; success: boolean }> = {} as Record<
-          Region,
-          { lastFetch: string | null; success: boolean }
-        >;
+        ]).catch(() => ({ timestamp: null as string | null }));
+
+        const regionalAnalytics: Record<Region, { lastFetch: string | null; success: boolean }> =
+          {} as Record<Region, { lastFetch: string | null; success: boolean }>;
         for (const region of Object.keys(REGION_NAMES) as Region[]) {
           try {
             await Promise.race([
               getRegionalAnalytics(region),
-              new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error("Regional analytics timeout")), 3000)),
+              new Promise<void>(
+                (_resolve, reject) =>
+                  setTimeout(() => reject(new Error("Regional analytics timeout")), 2000)
+              ),
             ]);
             regionalAnalytics[region] = { lastFetch: new Date().toISOString(), success: true };
           } catch {
@@ -108,19 +110,30 @@ export default async function handler(_req: Request): Promise<Response> {
         return { globalAnalytics, regionalAnalytics };
       })(),
       new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error("Analytics timeout")), 8000)
+        setTimeout(() => reject(new Error("Analytics timeout")), 6000)
       ),
     ]).catch((err) => {
       console.error("Analytics error:", (err as Error).message ?? err);
       return {
         globalAnalytics: { timestamp: null as string | null },
         regionalAnalytics: Object.fromEntries(
-          (Object.keys(REGION_NAMES) as Region[]).map((r) => [r, { lastFetch: null, success: false }])
+          (Object.keys(REGION_NAMES) as Region[]).map((r) => [
+            r,
+            { lastFetch: null as string | null, success: false },
+          ])
         ) as Record<Region, { lastFetch: string | null; success: boolean }>,
       };
     });
 
-    const { globalAnalytics, regionalAnalytics } = await analyticsPromise;
+    // All three run in parallel; longest individual timeout is 6s.
+    const [kiloStatus, tinyfishStatus, analyticsResult] = await Promise.all([
+      kiloPromise,
+      tinyfishPromise,
+      analyticsPromise,
+    ]);
+
+    const globalAnalytics = analyticsResult.globalAnalytics;
+    const regionalAnalytics = analyticsResult.regionalAnalytics;
 
     const onlineModelConnected =
       kiloStatus.available &&
