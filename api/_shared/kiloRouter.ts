@@ -627,6 +627,26 @@ const result: KiloResponse = {
       await this.initializing;
     }
 
+    // In quick mode, ensure keyStates is populated at least with configured keys
+    if (!this.initialized && this.keyStates.length === 0) {
+      const keys = readConfiguredKeys(KILO_KEY_ENV_NAMES);
+      this.keyStates = keys.map((key, index) => ({
+        keyIndex: index,
+        envName: key.envName,
+        endpointUrl: KILO_GATEWAY_CHAT_URL,
+        inputPrice: null,
+        outputPrice: null,
+        zeroCostVerified: false,
+        available: false,
+        rateLimited: false,
+        rateLimitScope: null,
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
+        lastCheckedAt: new Date().toISOString(),
+        lastSuccessAt: null,
+      }));
+    }
+
     if (!this.initialized) {
       // Quick mode: return basic status even if not initialized
       const usableKeys = this.keyStates.filter(k => k.available && !k.rateLimited).length;

@@ -401,6 +401,21 @@ export class TinyFishRouter {
       await this.refreshTinyfishStatus(true, abortSignal);
     }
 
+    // In quick mode, ensure keyStates is populated at least with configured keys
+    if (!this.initialized && this.keyStates.length === 0) {
+      const keys = readConfiguredKeys(TINYFISH_KEY_ENV_NAMES);
+      this.keyStates = keys.map((key, index) => ({
+        keyIndex: index,
+        envName: key.envName,
+        available: false,
+        rateLimited: false,
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
+        lastCheckedAt: null,
+        lastSuccessAt: null,
+      }));
+    }
+
     if (!this.initialized) {
       // Quick mode: return basic status even if not initialized
       const usableKeys = this.keyStates.filter(k => k.available && !k.rateLimited).length;
