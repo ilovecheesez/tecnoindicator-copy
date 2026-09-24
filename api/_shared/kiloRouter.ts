@@ -449,7 +449,7 @@ export class KiloRouter {
 
   async kiloInfer(payload: KiloInferPayload, abortSignal?: AbortSignal): Promise<KiloResponse> {
     if (!this.initialized) {
-      await this.initKiloRouter();
+      await this.initKiloRouter(abortSignal);
     } else if (this.initializing) {
       await this.initializing;
     }
@@ -459,7 +459,7 @@ export class KiloRouter {
       this.modelCandidates.some(m => m.zeroCostVerified && m.available && !m.rateLimited);
 
     if (!hasAnyUsable) {
-      await this.refreshKiloModels(true);
+      await this.refreshKiloModels(true, abortSignal);
     }
 
     const keys = this.keyStates

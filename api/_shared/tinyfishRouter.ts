@@ -195,7 +195,7 @@ export class TinyFishRouter {
     abortSignal?: AbortSignal
   ): Promise<TinyFishSearchResponse> {
     if (!this.initialized) {
-      await this.refreshTinyfishStatus(true);
+      await this.refreshTinyfishStatus(true, abortSignal);
     }
 
     const cacheKey = `tinyfish:search:${query}:${options.region ?? "global"}`;
@@ -300,7 +300,7 @@ export class TinyFishRouter {
 
   async tinyfishScrape(url: string, abortSignal?: AbortSignal): Promise<ScrapedContent | null> {
     if (!this.initialized) {
-      await this.refreshTinyfishStatus(true);
+      await this.refreshTinyfishStatus(true, abortSignal);
     }
 
     const safeUrl = sanitizeUrl(url);
