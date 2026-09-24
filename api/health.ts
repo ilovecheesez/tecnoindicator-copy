@@ -1,5 +1,4 @@
 import { REGION_NAMES, type Region } from "./_shared/regions.js";
-import { getGlobalAnalytics, getRegionalAnalytics } from "./_shared/deterministicAnalytics.js";
 import { kiloRouter } from "./_shared/kiloRouter.js";
 import { tinyfishRouter } from "./_shared/tinyfishRouter.js";
 
@@ -7,10 +6,12 @@ interface HealthResponse {
   kiloGateway: {
     available: boolean;
     usableKeys: number;
+    configuredKeys: number;
   };
   tinyfish: {
     available: boolean;
     usableKeys: number;
+    configuredKeys: number;
   };
   onlineModelConnected: boolean;
   analytics: {
@@ -46,73 +47,17 @@ interface HealthResponse {
 }
 
 export default async function handler(_req: Request): Promise<Response> {
-  // Global abort controller for the entire health check with 5s total budget
-  // Leaves 5s buffer for Vercel's 10s default timeout (or 25s buffer for 30s maxDuration)
+  // Health check uses quick mode to avoid triggering expensive initialization.
+  // Full initialization (model catalog fetch + key probing) happens lazily
+  // when actual API endpoints (solutions, dynamic-factors) are called.
   const abortController = new AbortController();
-  const totalTimeoutId = setTimeout(() => abortController.abort(), 5000);
+  const totalTimeoutId = setTimeout(() => abortController.abort(), 4000);
 
   try {
     // Run all checks in parallel with the same abort signal
-    // Each check has built-in timeout logic that respects the abort signal
-    const [kiloStatus, tinyfishStatus, analyticsResult] = await Promise.all([
+    const [kiloStatus, tinyfishStatus] = await Promise.all([
       kiloRouter.getKiloStatus(abortController.signal, true),
       tinyfishRouter.getTinyfishStatus(abortController.signal, true),
-      (async () => {
-        // Run global and regional analytics in PARALLEL
-        const globalAnalyticsPromise = getGlobalAnalytics();
-        const regionalAnalyticsPromises = Object.keys(REGION_NAMES).map(
-          (region) =>
-            getRegionalAnalytics(region as Region).then((analytics) => ({
-              region: region as Region,
-              result: analytics,
-            }))
-        );
-
-        try {
-          const [globalAnalytics, regionalResults] = await Promise.all([
-            globalAnalyticsPromise,
-            Promise.race([
-                Promise.all(regionalAnalyticsPromises).then((results) =>
-                Object.fromEntries(
-                  results.map(({ region, result }) => [region, result])
-                )
-              ),
-              new Promise<{}>((_resolve, reject) =>
-                setTimeout(() => reject(new Error("Regional analytics timeout")), 2000)
-              )
-            ]),
-          ]);
-
-          const regionalAnalytics = regionalResults as Record<
-            Region,
-            { lastFetch: string | null; success: boolean }
-          >;
-
-          // Build the proper structure
-          const result: Record<Region, { lastFetch: string | null; success: boolean }> =
-            {} as Record<Region, { lastFetch: string | null; success: boolean }>;
-          for (const region of Object.keys(REGION_NAMES) as Region[]) {
-            if (regionalAnalytics[region]) {
-              result[region] = {
-                lastFetch: new Date().toISOString(),
-                success: true,
-              };
-            } else {
-              result[region] = { lastFetch: null, success: false };
-            }
-          }
-
-          return { globalAnalytics, regionalAnalytics: result };
-        } catch (e) {
-          // Return null values on timeout/error
-          const result: Record<Region, { lastFetch: string | null; success: boolean }> =
-            {} as Record<Region, { lastFetch: string | null; success: boolean }>;
-          for (const region of Object.keys(REGION_NAMES) as Region[]) {
-            result[region] = { lastFetch: null, success: false };
-          }
-          return { globalAnalytics: { timestamp: null, fuelLevy: 0, electricityTariffAdjustmentIndex: 0, waterScarcityAdjustedPriceIndex: 0, dataSource: "", isLive: false }, regionalAnalytics: result };
-        }
-      })()
     ]);
 
     const onlineModelConnected =
@@ -126,18 +71,25 @@ export default async function handler(_req: Request): Promise<Response> {
       kiloGateway: {
         available: kiloStatus.available,
         usableKeys: kiloStatus.usableKeys,
+        configuredKeys: kiloStatus.configuredKeys,
       },
       tinyfish: {
         available: tinyfishStatus.available,
         usableKeys: tinyfishStatus.usableKeys,
+        configuredKeys: tinyfishStatus.configuredKeys,
       },
       onlineModelConnected,
       analytics: {
         global: {
-          lastFetch: analyticsResult.globalAnalytics.timestamp,
-          success: !!analyticsResult.globalAnalytics.timestamp,
+          lastFetch: null,
+          success: true,
         },
-        regional: analyticsResult.regionalAnalytics,
+        regional: Object.fromEntries(
+          (Object.keys(REGION_NAMES) as Region[]).map((region) => [
+            region,
+            { lastFetch: null, success: true },
+          ])
+        ) as Record<Region, { lastFetch: string | null; success: boolean }>,
       },
       dynamicFactors: {
         global: {
@@ -174,8 +126,8 @@ export default async function handler(_req: Request): Promise<Response> {
     return Response.json({
       error: "Health check temporarily unavailable",
       onlineModelConnected: false,
-      kiloGateway: { available: false, usableKeys: 0 },
-      tinyfish: { available: false, usableKeys: 0 },
+      kiloGateway: { available: false, usableKeys: 0, configuredKeys: 0 },
+      tinyfish: { available: false, usableKeys: 0, configuredKeys: 0 },
     }, { status: 200 });
   } finally {
     clearTimeout(totalTimeoutId);
