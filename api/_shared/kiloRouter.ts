@@ -172,7 +172,7 @@ export class KiloRouter {
           Accept: "application/json",
           ...(authKey ? { Authorization: `Bearer ${authKey}` } : {}),
         },
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(5000),
       });
 
       if (!response.ok) {
@@ -466,7 +466,7 @@ export class KiloRouter {
               temperature: payload.temperature ?? 0.7,
               response_format: payload.response_format ?? undefined,
             }),
-            signal: abortSignal ?? AbortSignal.timeout(15000),
+            signal: abortSignal ?? AbortSignal.timeout(10000),
           });
 
           const status = response.status;
@@ -575,6 +575,11 @@ const result: KiloResponse = {
           lastError = error instanceof Error ? error : new Error(String(error));
           keyState.available = false;
           keyState.lastCheckedAt = new Date().toISOString();
+        }
+
+        // If the abort signal has been fired, stop retrying
+        if (abortSignal && abortSignal.aborted) {
+          throw new Error("Kilo inference aborted");
         }
       }
     }

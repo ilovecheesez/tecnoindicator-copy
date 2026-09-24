@@ -263,6 +263,11 @@ export class TinyFishRouter {
         lastError = error instanceof Error ? error : new Error(String(error));
       }
 
+      // If the abort signal has been fired, stop retrying
+      if (abortSignal && abortSignal.aborted) {
+        break;
+      }
+
       keyState = this.selectKey();
     }
 
@@ -355,6 +360,11 @@ export class TinyFishRouter {
         lastError = new Error(`TinyFish scrape failed with status ${status}`);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+      }
+
+      // If the abort signal has been fired, stop retrying
+      if (abortSignal && abortSignal.aborted) {
+        break;
       }
 
       keyState = this.selectKey();
