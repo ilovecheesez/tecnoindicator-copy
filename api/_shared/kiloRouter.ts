@@ -153,6 +153,7 @@ export class KiloRouter {
           Accept: "application/json",
           ...(authKey ? { Authorization: `Bearer ${authKey}` } : {}),
         },
+        signal: AbortSignal.timeout(10000),
       });
 
       if (!response.ok) {
