@@ -71,39 +71,61 @@ export class TinyFishRouter {
       lastSuccessAt: null,
     }));
 
-    for (const keyState of this.keyStates) {
-      try {
-        const testKey = process.env[keyState.envName];
-        if (!testKey) continue;
+    // Probe all keys in PARALLEL with a short timeout to avoid Vercel function timeouts.
+    // Sequential probing with 10s timeouts each would take too long with many keys.
+    const controller = new AbortController();
+    const overallTimeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const probeResults = await Promise.all(
+        this.keyStates.map(async (keyState) => {
+          const testKey = process.env[keyState.envName];
+          if (!testKey) return { keyIndex: keyState.keyIndex, ok: false, status: 0, headers: null as Headers | null };
 
-        const response = await fetch(buildSearchUrl("test", 1), {
-          headers: {
-            "X-API-Key": testKey,
-          },
-          signal: AbortSignal.timeout(10000),
-        });
+          try {
+            const response = await fetch(buildSearchUrl("test", 1), {
+              headers: {
+                "X-API-Key": testKey,
+              },
+              signal: controller.signal,
+            });
+            return { keyIndex: keyState.keyIndex, ok: true, status: response.status, headers: response.headers };
+          } catch {
+            return { keyIndex: keyState.keyIndex, ok: false, status: 0, headers: null as Headers | null };
+          }
+        }),
+      );
 
-        if (response.ok) {
+      for (const result of probeResults) {
+        const keyState = this.keyStates[result.keyIndex];
+        if (!keyState) continue;
+
+        if (!result.ok) {
+          keyState.available = false;
+          keyState.lastCheckedAt = new Date().toISOString();
+          continue;
+        }
+
+        if (result.status === 200) {
           keyState.available = true;
           keyState.lastCheckedAt = new Date().toISOString();
           keyState.lastSuccessAt = keyState.lastCheckedAt;
-          const remaining = response.headers.get("x-ratelimit-remaining");
+          const remaining = result.headers?.get("x-ratelimit-remaining");
           if (remaining) {
             const parsed = Number(remaining);
             if (Number.isFinite(parsed)) keyState.rateLimitRemaining = parsed;
           }
-        } else if (response.status === 401 || response.status === 403) {
+        } else if (result.status === 401 || result.status === 403) {
           keyState.available = false;
           keyState.lastCheckedAt = new Date().toISOString();
-        } else if (response.status === 429) {
+        } else if (result.status === 429) {
           keyState.rateLimited = true;
           keyState.lastCheckedAt = new Date().toISOString();
-          this.parseRateLimitHeaders(keyState, response);
+          if (result.headers) this.parseRateLimitHeaders(keyState, result.headers);
         }
-      } catch {
-        keyState.available = false;
-        keyState.lastCheckedAt = new Date().toISOString();
       }
+    } finally {
+      clearTimeout(overallTimeout);
+      controller.abort();
     }
 
     this.initialized = true;
@@ -111,16 +133,16 @@ export class TinyFishRouter {
 
   private parseRateLimitHeaders(
     keyState: TinyFishKeyState,
-    response: Response
+    headers: Headers
   ): void {
-    const retryAfter = response.headers.get("retry-after");
+    const retryAfter = headers.get("retry-after");
     if (retryAfter) {
       const seconds = Number(retryAfter);
       if (Number.isFinite(seconds)) {
         keyState.rateLimitResetAt = new Date(Date.now() + seconds * 1000).toISOString();
       }
     }
-    const remaining = response.headers.get("x-ratelimit-remaining");
+    const remaining = headers.get("x-ratelimit-remaining");
     if (remaining) {
       const parsed = Number(remaining);
       if (Number.isFinite(parsed)) keyState.rateLimitRemaining = parsed;
@@ -186,7 +208,7 @@ export class TinyFishRouter {
           headers: {
             "X-API-Key": testKey,
           },
-          signal: AbortSignal.timeout(30000),
+          signal: AbortSignal.timeout(10000),
         });
 
         const status = response.status;
@@ -229,7 +251,7 @@ export class TinyFishRouter {
         }
 
         if (status === 429) {
-          this.parseRateLimitHeaders(keyState, response);
+          this.parseRateLimitHeaders(keyState, response.headers);
           keyState = this.rotateKey(keyState);
           lastError = new Error("Rate limited");
           continue;
@@ -290,7 +312,7 @@ export class TinyFishRouter {
           body: JSON.stringify({
             urls: [safeUrl],
           }),
-          signal: AbortSignal.timeout(30000),
+          signal: AbortSignal.timeout(10000),
         });
 
         const status = response.status;
@@ -309,7 +331,7 @@ export class TinyFishRouter {
 
           keyState.lastCheckedAt = new Date().toISOString();
           keyState.lastSuccessAt = keyState.lastCheckedAt;
-          this.parseRateLimitHeaders(keyState, response);
+          this.parseRateLimitHeaders(keyState, response.headers);
 
           await setCache(cacheKey, result, 10 * 60 * 1000);
           return result;
@@ -323,7 +345,7 @@ export class TinyFishRouter {
         }
 
         if (status === 429) {
-          this.parseRateLimitHeaders(keyState, response);
+          this.parseRateLimitHeaders(keyState, response.headers);
           keyState = this.rotateKey(keyState);
           lastError = new Error("Rate limited");
           continue;
@@ -362,8 +384,8 @@ export class TinyFishRouter {
   }
 
   private async backoff(attempt: number): Promise<void> {
-    const delays = [1000, 2000, 4000];
-    const delay = delays[Math.min(attempt, delays.length - 1)] ?? 4000;
+    const delays = [500, 1000, 2000];
+    const delay = delays[Math.min(attempt, delays.length - 1)] ?? 2000;
     await new Promise(resolve => setTimeout(resolve, delay));
   }
 }

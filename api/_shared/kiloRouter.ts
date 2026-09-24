@@ -114,20 +114,39 @@ export class KiloRouter {
 
     await this.refreshKiloModels(true);
 
-    // Probe every configured key against eligible zero-cost models
-    for (const keyState of this.keyStates) {
-      for (const modelCandidate of this.modelCandidates) {
-        if (!modelCandidate.zeroCostVerified || !modelCandidate.available) continue;
-        const probe = await this.probeKeyModel(keyState, modelCandidate);
-        if (probe.success) {
-          keyState.available = true;
-          keyState.inputPrice = probe.inputPrice ?? null;
-          keyState.outputPrice = probe.outputPrice ?? null;
-          keyState.zeroCostVerified = true;
-          keyState.lastCheckedAt = new Date().toISOString();
-          keyState.lastSuccessAt = keyState.lastCheckedAt;
-          break; // One successful model per key is enough
+    // Probe keys against eligible zero-cost models in PARALLEL with a timeout.
+    // Sequential probing would cause Vercel function timeouts with many keys/models.
+    const eligibleModels = this.modelCandidates.filter(m => m.zeroCostVerified && m.available && !m.rateLimited);
+    if (eligibleModels.length > 0) {
+      const controller = new AbortController();
+      const overallTimeout = setTimeout(() => controller.abort(), 5000);
+      try {
+        // For each key, probe against the FIRST eligible model only (one success is enough)
+        // to minimize total probe time. Run all key probes in parallel.
+        const probeResults = await Promise.all(
+          this.keyStates.map(async (keyState) => {
+            try {
+              return await this.probeKeyModel(keyState, eligibleModels[0], controller.signal);
+            } catch {
+              return { success: false };
+            }
+          }),
+        );
+        for (let i = 0; i < this.keyStates.length; i++) {
+          const keyState = this.keyStates[i];
+          const probe = probeResults[i];
+          if (probe.success) {
+            keyState.available = true;
+            keyState.inputPrice = probe.inputPrice ?? null;
+            keyState.outputPrice = probe.outputPrice ?? null;
+            keyState.zeroCostVerified = true;
+            keyState.lastCheckedAt = new Date().toISOString();
+            keyState.lastSuccessAt = keyState.lastCheckedAt;
+          }
         }
+      } finally {
+        clearTimeout(overallTimeout);
+        controller.abort();
       }
     }
 
@@ -227,7 +246,8 @@ export class KiloRouter {
 
   private async probeKeyModel(
     keyState: KiloKeyState,
-    modelCandidate: ModelCandidate
+    modelCandidate: ModelCandidate,
+    abortSignal?: AbortSignal
   ): Promise<{
     success: boolean;
     inputPrice?: number | null;
@@ -266,7 +286,7 @@ export class KiloRouter {
           max_tokens: 4,
           temperature: 0,
         }),
-        signal: AbortSignal.timeout(10000),
+        signal: abortSignal ? abortSignal : AbortSignal.timeout(10000),
       });
 
       const status = response.status;
