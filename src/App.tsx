@@ -125,41 +125,12 @@ export default function App() {
     const pollFactors = async () => {
       try {
         const res = await fetch("/api/dynamic-factors");
-          if (res.ok) {
-            const data = await res.json();
-            void data;
+        if (res.ok) {
+          const data = await res.json();
+          if (active && Array.isArray(data.factors) && data.factors.length > 0) {
+            setGlobalFactors(data.factors);
           }
-      } catch { /* ignore */ }
-      for (const r of EVAL_REGIONS) {
-        try {
-          const res = await fetch(`/api/regional-factors?region=${r.id}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (active && Array.isArray(data.factors) && data.factors.length === 8) {
-              setRegionalFactors(prev => ({ ...prev, [r.id]: data.factors }));
-            }
-          }
-        } catch { /* ignore */ }
-        await new Promise(r => setTimeout(r, REGION_STAGGER_MS));
-      }
-    };
-    pollFactors();
-    const id = setInterval(pollFactors, FACTORS_POLL_MS);
-    return () => { active = false; clearInterval(id); };
-  }, []);
-
-  // Poll dynamic factors (global + regional)
-  useEffect(() => {
-    let active = true;
-    const pollFactors = async () => {
-      try {
-        const res = await fetch("/api/dynamic-factors");
-          if (res.ok) {
-            const data = await res.json();
-            if (active && Array.isArray(data.factors) && data.factors.length > 0) {
-              void data.factors;
-            }
-          }
+        }
       } catch { /* ignore */ }
       for (const r of EVAL_REGIONS) {
         try {
@@ -171,7 +142,7 @@ export default function App() {
             }
           }
         } catch { /* ignore */ }
-        await new Promise(r => setTimeout(r, REGION_STAGGER_MS));
+        await new Promise(resolve => setTimeout(resolve, REGION_STAGGER_MS));
       }
     };
     pollFactors();
@@ -184,7 +155,8 @@ export default function App() {
     let active = true;
     const pollSolutions = async () => {
       try {
-        const res = await fetch("/api/solutions?scope=global");
+        const scope = region === "global" ? "global" : region;
+        const res = await fetch(`/api/solutions?scope=${scope}`);
         if (res.ok) {
           const data = await res.json();
           if (active && Array.isArray(data.solutions)) {
@@ -196,7 +168,7 @@ export default function App() {
     pollSolutions();
     const id = setInterval(pollSolutions, FACTORS_POLL_MS);
     return () => { active = false; clearInterval(id); };
-  }, []);
+  }, [region]);
 
   return (
     <div className="min-h-screen bg-base font-sans text-slate-200 antialiased">
@@ -220,6 +192,7 @@ export default function App() {
           onRegion={setRegion}
         />
         <SolutionsSection
+          globalFactors={globalFactors}
           dynamicFactors={regionalFactors}
           healthStatus={healthStatus}
           globalSolutions={globalSolutions}

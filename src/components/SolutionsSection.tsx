@@ -77,19 +77,21 @@ function SolutionCard({
 }
 
 interface SolutionsSectionProps {
+  globalFactors: import("../lib/model").Factor[];
   dynamicFactors: Record<string, import("../lib/model").Factor[]>;
   healthStatus: "Initializing AI" | "Online Model Connected" | "Offline Model";
   globalSolutions: Solution[];
 }
 
 export default function SolutionsSection({
+  globalFactors,
   dynamicFactors,
   healthStatus,
   globalSolutions,
 }: SolutionsSectionProps) {
   const allSolutions = useMemo(() => {
     if (globalSolutions.length > 0) return globalSolutions;
-    const factors = Object.values(dynamicFactors).flat();
+    const factors = globalFactors.length > 0 ? globalFactors : Object.values(dynamicFactors).flat();
     return factors.slice(0, MAX_SOLUTIONS).map((f) => ({
       id: `solution-${f.id}`,
       title: f.name,
@@ -102,7 +104,7 @@ export default function SolutionsSection({
       updatedAt: f.updatedAt,
       scope: f.scope,
     }));
-  }, [globalSolutions, dynamicFactors]);
+  }, [globalSolutions, globalFactors, dynamicFactors]);
 
   return (
     <section id="solutions" className="relative scroll-mt-20 border-t border-line py-16 sm:py-20">
