@@ -1,4 +1,5 @@
 import { tinyfishRouter } from "./_shared/tinyfishRouter.js";
+import { kiloRouter } from "./_shared/kiloRouter.js";
 import { getCache, setCache } from "./_shared/cache.js";
 import { SEARCH_CACHE_MS, sanitizeUrl } from "./_shared/http.js";
 import {
@@ -6,9 +7,11 @@ import {
   REGIONAL_DEFAULTS,
   getGlobalAnalytics,
   getRegionalAnalytics,
+  computeAnalyticsFromLivePrices,
 } from "./_shared/deterministicAnalytics.js";
 import { isRegion, type Region } from "./_shared/regions.js";
 import type { RegionId } from "./_shared/types.js";
+import { safeParseJson } from "./_shared/validation.js";
 
 const OIL_QUERY_PREFIXES: Record<RegionId, string> = {
   global: "",
@@ -25,32 +28,26 @@ const COMMODITY_QUERIES = [
   { commodity: "water", queryTemplate: "Water price per cubic meter 2026" },
 ];
 
-function extractPriceFromText(text: string): number | null {
-  // Extract price numbers from text (look for patterns like $XX.XX, XX.XX USD, etc.)
-  const pricePatterns = [
-    /\$(\d+(?:\.\d+)?)/g, // $XX.XX
-    /(\d+(?:\.\d+)?)\s*USD/g, // XX.XX USD
-    /(\d+(?:\.\d+)?)\s*dollars?/gi, // XX.XX dollars
-    /(\d+(?:\.\d+)?)\s*€/g, // XX.XX €
-    /(\d+(?:\.\d+)?)\s*EUR/g, // XX.XX EUR
-    /(\d+(?:\.\d+)?)\s*¥/g, // XX.XX ¥
-    /(\d+(?:\.\d+)?)\s*元/g, // XX.XX 元
-  ];
+const PRICE_EXTRACTION_PROMPT = `You are an expert financial data analyst specializing in commodity pricing. Your task is to extract precise price data from search results.
 
-  for (const pattern of pricePatterns) {
-    const matches = [...text.matchAll(pattern)];
-    if (matches.length > 0) {
-      // Take the first reasonable price (not too small or too large)
-      for (const match of matches) {
-        const price = parseFloat(match[1]);
-        if (price >= 0.01 && price <= 10000) {
-          return price;
-        }
-      }
+From the provided search results, identify the most recent, reliable price figures for each commodity (oil, electricity, water) with their sources.
+
+Return strict JSON only with this schema:
+{
+  "prices": [
+    {
+      "commodity": "oil" | "electricity" | "water",
+      "price": number (USD),
+      "unit": "string (e.g., 'USD per barrel', 'USD per MWh', 'USD per cubic meter')",
+      "source": "string (URL to the source)",
+      "confidence": number (0-100)
     }
-  }
-  return null;
+  ]
 }
+
+Search results may contain prices in various formats ($XX.XX, XX.XX USD, etc.). Extract the most plausible price from the most reliable source. Prioritize recent, authoritative sources. If a price cannot be clearly identified, set confidence to 0 and omit that commodity. Do not invent prices.
+
+Do not include any text outside the JSON.`;
 
 function getCommodityUnit(commodity: "oil" | "electricity" | "water"): string {
   switch (commodity) {
@@ -164,6 +161,31 @@ export default async function handler(req: Request): Promise<Response> {
   }
 }
 
+function extractPriceFromText(text: string): number | null {
+  const pricePatterns = [
+    /\$(\d+(?:\.\d+)?)/g,
+    /(\d+(?:\.\d+)?)\s*USD/g,
+    /(\d+(?:\.\d+)?)\s*dollars?/gi,
+    /(\d+(?:\.\d+)?)\s*€/g,
+    /(\d+(?:\.\d+)?)\s*EUR/g,
+    /(\d+(?:\.\d+)?)\s*¥/g,
+    /(\d+(?:\.\d+)?)\s*元/g,
+  ];
+
+  for (const pattern of pricePatterns) {
+    const matches = [...text.matchAll(pattern)];
+    if (matches.length > 0) {
+      for (const match of matches) {
+        const price = parseFloat(match[1]);
+        if (price >= 0.01 && price <= 10000) {
+          return price;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function getLivePricesFromTinyFish(scope: RegionId, abortSignal: AbortSignal): Promise<{
   oil: { price: number; unit: string; source: string; isLive: boolean };
   electricity: { price: number; unit: string; source: string; isLive: boolean };
@@ -172,65 +194,117 @@ async function getLivePricesFromTinyFish(scope: RegionId, abortSignal: AbortSign
   dataSource: string;
   isLive: boolean;
 }> {
+  const searchPromises = COMMODITY_QUERIES.map(async ({ commodity, queryTemplate }) => {
+    const query = `${OIL_QUERY_PREFIXES[scope]}${queryTemplate}`;
+    try {
+      return await tinyfishRouter.tinyfishSearch(query, { limit: 10 }, abortSignal);
+    } catch (error) {
+      console.warn(`Failed to search for ${commodity}:`, error);
+      return { results: [], total: 0, keyIndex: -1 };
+    }
+  });
+
+  const searchResults = await Promise.all(searchPromises);
+
+  // Use Kilo AI to analyze the search results and extract precise prices
+  const payload = {
+    messages: [
+      { role: "system", content: PRICE_EXTRACTION_PROMPT },
+      {
+        role: "user",
+        content: JSON.stringify({
+          scope,
+          results: searchResults.map((result, index) => ({
+            commodity: COMMODITY_QUERIES[index].commodity,
+            results: (result.results ?? []).map((r: any) => ({
+              title: r.title,
+              snippet: r.snippet,
+              url: sanitizeUrl(r.url) ?? r.url,
+              publishedAt: r.publishedAt,
+            })),
+          })),
+        }),
+      },
+    ],
+    max_tokens: 2048,
+    temperature: 0.1,
+  };
+
+  try {
+    const response = await kiloRouter.kiloInfer(payload, abortSignal);
+    const content = response.choices?.[0]?.message?.content ?? "";
+    const parsed = safeParseJson<{ prices?: unknown[] }>(content);
+    if (parsed?.prices && Array.isArray(parsed.prices)) {
+      const extractedPrices = parsed.prices
+        .map((p: any) => ({
+          commodity: p.commodity,
+          price: typeof p.price === "number" ? p.price : null,
+          unit: typeof p.unit === "string" ? p.unit : getCommodityUnit(p.commodity),
+          source: typeof p.source === "string" ? sanitizeUrl(p.source) ?? p.source : "",
+          confidence: typeof p.confidence === "number" ? p.confidence : 0,
+        }))
+        .filter((p: any) => p.commodity && p.price !== null && p.price > 0 && p.confidence >= 50);
+
+      const prices: Record<string, { price: number; unit: string; source: string }> = {};
+      for (const item of extractedPrices) {
+        if (item.commodity === "oil" || item.commodity === "electricity" || item.commodity === "water") {
+          prices[item.commodity] = {
+            price: item.price,
+            unit: item.unit,
+            source: item.source,
+          };
+        }
+      }
+
+      if (prices.oil && prices.electricity && prices.water) {
+        return {
+          oil: { ...prices.oil, isLive: true },
+          electricity: { ...prices.electricity, isLive: true },
+          water: { ...prices.water, isLive: true },
+          asOf: new Date().toISOString(),
+          dataSource: "Kilo AI analysis of TinyFish search results",
+          isLive: true,
+        };
+      }
+    }
+  } catch (error) {
+    console.warn("Kilo AI price analysis failed, falling back to deterministic extraction:", error);
+  }
+
+  // Fallback: deterministic extraction from search results (legacy path)
   const prices: Record<string, { price: number | null; source: string }> = {
     oil: { price: null, source: "" },
     electricity: { price: null, source: "" },
     water: { price: null, source: "" },
   };
 
-  const searchPromises = COMMODITY_QUERIES.map(async ({ commodity, queryTemplate }) => {
-    const query = `${OIL_QUERY_PREFIXES[scope]}${queryTemplate}`;
-    try {
-      const result = await tinyfishRouter.tinyfishSearch(query, { limit: 10 }, abortSignal);
-      
-      // Extract price from search results
-      for (const res of result.results) {
-        const textToSearch = `${res.title} ${res.snippet}`;
-        const price = extractPriceFromText(textToSearch);
-        if (price !== null) {
-          prices[commodity] = {
-            price,
-            source: sanitizeUrl(res.url) || res.url,
-          };
-          break; // Take first valid price
-        }
+  searchResults.forEach((result, index) => {
+    const commodity = COMMODITY_QUERIES[index].commodity;
+    for (const res of result.results ?? []) {
+      const textToSearch = `${res.title} ${res.snippet}`;
+      const price = extractPriceFromText(textToSearch);
+      if (price !== null) {
+        prices[commodity] = {
+          price,
+          source: sanitizeUrl(res.url) || res.url,
+        };
+        break;
       }
-    } catch (error) {
-      console.warn(`Failed to search for ${commodity}:`, error);
     }
   });
 
-  await Promise.all(searchPromises);
-
-  // Check if we got all three prices
   const allPricesFound = Object.values(prices).every(p => p.price !== null);
-  
+
   if (allPricesFound) {
     return {
-      oil: {
-        price: prices.oil.price!,
-        unit: getCommodityUnit("oil"),
-        source: prices.oil.source,
-        isLive: true,
-      },
-      electricity: {
-        price: prices.electricity.price!,
-        unit: getCommodityUnit("electricity"),
-        source: prices.electricity.source,
-        isLive: true,
-      },
-      water: {
-        price: prices.water.price!,
-        unit: getCommodityUnit("water"),
-        source: prices.water.source,
-        isLive: true,
-      },
+      oil: { price: prices.oil.price!, unit: getCommodityUnit("oil"), source: prices.oil.source, isLive: true },
+      electricity: { price: prices.electricity.price!, unit: getCommodityUnit("electricity"), source: prices.electricity.source, isLive: true },
+      water: { price: prices.water.price!, unit: getCommodityUnit("water"), source: prices.water.source, isLive: true },
       asOf: new Date().toISOString(),
-      dataSource: "TinyFish search",
+      dataSource: "TinyFish search (deterministic fallback)",
       isLive: true,
     };
   } else {
-    // Return not live signal if any price is missing
     return {
       oil: { price: 0, unit: "USD per barrel", source: "insufficient data", isLive: false },
       electricity: { price: 0, unit: "USD per MWh", source: "insufficient data", isLive: false },

@@ -153,3 +153,33 @@ export async function clearAnalyticsCache(): Promise<void> {
     ["analytics:global", ...Object.keys(REGION_NAMES).map((r) => `analytics:regional:${r}`)].map((key) => deleteCache(key)),
   );
 }
+
+export async function computeAnalyticsFromLivePrices(
+  input: PriceInput,
+  config: AnalyticsConfig = readConfig(),
+  dataSource: string = "Live market prices",
+  isLive: boolean = true,
+  region?: Region,
+): Promise<AnalyticsSnapshot | RegionalAnalyticsSnapshot> {
+  const dieselRatio = input.baselineDieselPrice > 0 ? (input.currentDieselPrice - input.baselineDieselPrice) / input.baselineDieselPrice : 0;
+  const electricityRatio = input.baselineElectricityTariff > 0 ? (input.currentElectricityTariff - input.baselineElectricityTariff) / input.baselineElectricityTariff : 0;
+  const waterRatio = input.baselineWaterPrice > 0 ? (input.currentWaterPrice - input.baselineWaterPrice) / input.baselineWaterPrice : 0;
+
+  const fuelLevy = dieselRatio / config.fuelFactor;
+  const electricityTariffAdjustmentIndex = electricityRatio * config.gridLossFactor;
+  const waterScarcityAdjustedPriceIndex = waterRatio * config.waterScarcityMultiplier;
+
+  const result: AnalyticsSnapshot | RegionalAnalyticsSnapshot = {
+    fuelLevy: round(clamp(fuelLevy, -50, 50), 4),
+    electricityTariffAdjustmentIndex: round(clamp(electricityTariffAdjustmentIndex, -10, 10), 4),
+    waterScarcityAdjustedPriceIndex: round(clamp(waterScarcityAdjustedPriceIndex, -10, 10), 4),
+    dataSource,
+    isLive,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (region) {
+    return { ...result, region } as RegionalAnalyticsSnapshot;
+  }
+  return result as AnalyticsSnapshot;
+}
