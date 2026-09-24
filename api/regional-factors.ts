@@ -215,20 +215,12 @@ function buildFallbackFactors(scope: Region, region: Region): Factor[] {
   }));
 }
 
-<<<<<<< ours
-async function runFactorAnalysis(scope: Region, region: Region, abortController?: AbortController): Promise<Factor[]> {
-=======
 async function runFactorAnalysis(scope: Region, region: Region): Promise<Factor[]> {
->>>>>>> theirs
   const analytics = await getRegionalAnalytics(region);
   const existing = buildFallbackFactors(scope, region);
   const searches = await Promise.all(
     REGION_QUERIES[region].map((q) =>
-<<<<<<< ours
-      tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region }, abortController?.signal),
-=======
       tinyfishRouter.tinyfishSearch(`${q} ${RECENT_MONTH()}`, { limit: 10, region }),
->>>>>>> theirs
     ),
   );
   const candidates = searches
@@ -240,7 +232,7 @@ async function runFactorAnalysis(scope: Region, region: Region): Promise<Factor[
   const excerpts = await Promise.all(
     candidates.map(async (r) => {
       try {
-        const scraped = await tinyfishRouter.tinyfishScrape(r.url, abortController?.signal);
+        const scraped = await tinyfishRouter.tinyfishScrape(r.url);
         return scraped ? { ...r, text: scraped.text, title: scraped.title || r.title } : r;
       } catch {
         return r;
@@ -264,7 +256,7 @@ async function runFactorAnalysis(scope: Region, region: Region): Promise<Factor[
     max_tokens: 4096,
     temperature: 0.2,
   };
-  const response = await kiloRouter.kiloInfer(payload, abortController?.signal);
+  const response = await kiloRouter.kiloInfer(payload);
   const content = response.choices?.[0]?.message?.content ?? "";
   const parsed = safeParseJson<{ factors?: unknown[] }>(content);
   if (!parsed?.factors) return buildFallbackFactors(scope, region);
@@ -297,7 +289,7 @@ export default async function handler(req: Request): Promise<Response> {
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), 6000);
     try {
-      const factors = await runFactorAnalysis(region, region, abortController);
+      const factors = await runFactorAnalysis(region, region);
       await setCache(cacheKey, factors, FACTORS_CACHE_MS);
       return Response.json({ factors, scope: region, count: factors.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
     } finally {

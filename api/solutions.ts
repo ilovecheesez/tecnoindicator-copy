@@ -134,50 +134,6 @@ async function fetchFreshEvidence(scope: RegionId, abortSignal: AbortSignal): Pr
   }
 }
 
-function isValidRegionId(value: string): value is RegionId {
-  return value === "global" || isRegion(value);
-}
-
-function buildSolution(s: unknown, scope: RegionId, validRegions: RegionId[]): Solution | null {
-  if (!s || typeof s !== "object") return null;
-  const obj = s as Record<string, unknown>;
-  const title = typeof obj.title === "string" ? obj.title.trim().slice(0, 120) : "";
-  const summary = typeof obj.summary === "string" ? obj.summary.trim().slice(0, 600) : "";
-  const actions = Array.isArray(obj.actions)
-    ? obj.actions.filter((a: unknown) => typeof a === "string").map((a: string) => a.trim().slice(0, 200)).slice(0, 5)
-    : [];
-  if (!title || !summary || actions.length === 0) return null;
-  const rawRegions = Array.isArray(obj.regions)
-    ? obj.regions.filter((r: unknown): r is RegionId => typeof r === "string" && validRegions.includes(r as RegionId))
-    : [];
-  const commodities: ("oil" | "electricity" | "water")[] = Array.isArray(obj.commodities)
-    ? obj.commodities.filter((c): c is "oil" | "electricity" | "water" =>
-        c === "oil" || c === "electricity" || c === "water",
-      )
-    : ["oil", "electricity", "water"];
-  const relatedFactors = Array.isArray(obj.relatedFactors)
-    ? obj.relatedFactors.filter((f: unknown) => typeof f === "string").slice(0, 8)
-    : [];
-  const confidence =
-    typeof obj.confidence === "number" && Number.isFinite(obj.confidence)
-      ? Math.max(0, Math.min(100, Math.round(obj.confidence)))
-      : 70;
-
-  return {
-    id: `solution-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    title,
-    summary,
-    actions,
-    commodities,
-    regions: rawRegions.length > 0 ? rawRegions : (scope === "global" ? ["global"] : [scope]),
-    scope,
-    relatedFactors,
-    confidence,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-}
-
 export default async function handler(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
@@ -218,7 +174,6 @@ export default async function handler(req: Request): Promise<Response> {
       temperature: 0.25,
     };
 
-<<<<<<< ours
     try {
       const response = await kiloRouter.kiloInfer(payload, abortController.signal);
       const content = response.choices?.[0]?.message?.content ?? "";
@@ -236,21 +191,6 @@ export default async function handler(req: Request): Promise<Response> {
     } finally {
       clearTimeout(timeoutId);
     }
-=======
-    const response = await kiloRouter.kiloInfer(payload);
-    const content = response.choices?.[0]?.message?.content ?? "";
-    const parsed = safeParseJson<{ solutions?: unknown[] }>(content);
-
-    const validRegions: RegionId[] = ["global", "asia", "europe", "africa", "americas", "oceania"];
-
-    const solutions: Solution[] = (parsed?.solutions ?? [])
-      .map((s: unknown) => buildSolution(s, scope, validRegions))
-      .filter((s): s is Solution => s !== null)
-      .slice(0, MAX_SOLUTIONS);
-
-    await setCache(cacheKey, solutions, SOLUTIONS_CACHE_MS);
-    return Response.json({ solutions, scope, count: solutions.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
->>>>>>> theirs
   } catch (error) {
     console.error("Solutions error:", error);
     return Response.json({ solutions: [], scope: "global" as RegionId, count: 0, aiCurated: false, cacheKey: "solutions:error", updatedAt: new Date().toISOString(), error: "Solutions temporarily unavailable" }, { status: 200 });
