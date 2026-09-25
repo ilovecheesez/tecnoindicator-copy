@@ -128,9 +128,13 @@ export class KiloRouter {
 
 await this.refreshKiloModels(true, abortSignal);
 
-    // Probe keys against eligible zero-cost models in PARALLEL with a timeout.
+    // Probe keys against eligible models in PARALLEL with a timeout.
+    // Prefer zero-cost models, but fall back to any available model.
     // Sequential probing would cause Vercel function timeouts with many keys/models.
-    const eligibleModels = this.modelCandidates.filter(m => m.zeroCostVerified && m.available && !m.rateLimited);
+    let eligibleModels = this.modelCandidates.filter(m => m.zeroCostVerified && m.available && !m.rateLimited);
+    if (eligibleModels.length === 0) {
+      eligibleModels = this.modelCandidates.filter(m => m.available && !m.rateLimited);
+    }
     if (eligibleModels.length > 0) {
       // Combine the passed abort signal with our 2s internal timeout for faster health checks
       const controller = new AbortController();
@@ -150,14 +154,14 @@ await this.refreshKiloModels(true, abortSignal);
             }
           }),
         );
-        for (let i = 0; i < this.keyStates.length; i++) {
+      for (let i = 0; i < this.keyStates.length; i++) {
           const keyState = this.keyStates[i];
           const probe = probeResults[i];
           if (probe.success) {
             keyState.available = true;
             keyState.inputPrice = probe.inputPrice ?? null;
             keyState.outputPrice = probe.outputPrice ?? null;
-            keyState.zeroCostVerified = true;
+            keyState.zeroCostVerified = probe.zeroCostVerified ?? false;
             keyState.lastCheckedAt = new Date().toISOString();
             keyState.lastSuccessAt = keyState.lastCheckedAt;
           }
@@ -244,21 +248,19 @@ await this.refreshKiloModels(true, abortSignal);
         inputPrice === 0 &&
         outputPrice === 0;
 
-      if (zeroCostVerified) {
-        candidates.push({
-          modelId,
-          inputPrice,
-          outputPrice,
-          zeroCostVerified,
-          available: true,
-          rateLimited: false,
-          rateLimitScope: null,
-          rateLimitRemaining: null,
-          rateLimitResetAt: null,
-          lastCheckedAt: null,
-          lastSuccessAt: null,
-        });
-      }
+      candidates.push({
+        modelId,
+        inputPrice,
+        outputPrice,
+        zeroCostVerified,
+        available: true,
+        rateLimited: false,
+        rateLimitScope: null,
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
+        lastCheckedAt: null,
+        lastSuccessAt: null,
+      });
     }
 
     // Prefer default model first
@@ -285,6 +287,7 @@ await this.refreshKiloModels(true, abortSignal);
     success: boolean;
     inputPrice?: number | null;
     outputPrice?: number | null;
+    zeroCostVerified?: boolean;
     rateLimitScope?: "key" | "model" | "global" | "unknown" | null;
   }> {
     const probeKey = `kilo:access-probe:${keyState.keyIndex}:${modelCandidate.modelId}`;
@@ -333,6 +336,7 @@ await this.refreshKiloModels(true, abortSignal);
           success: true,
           inputPrice: modelCandidate.inputPrice,
           outputPrice: modelCandidate.outputPrice,
+          zeroCostVerified: modelCandidate.zeroCostVerified,
         };
         await setCache(probeKey, result, ACCESS_PROBE_CACHE_MS);
         return result;
@@ -455,10 +459,10 @@ await this.refreshKiloModels(true, abortSignal);
     }
 
     // Force refresh before returning complete Kilo-unavailable
-    const hasAnyUsable = this.keyStates.some(k => k.available && !k.rateLimited) &&
-      this.modelCandidates.some(m => m.zeroCostVerified && m.available && !m.rateLimited);
+    const hasAnyUsableKeys = this.keyStates.some(k => k.available && !k.rateLimited);
+    const hasAnyUsableModels = this.modelCandidates.some(m => m.available && !m.rateLimited);
 
-    if (!hasAnyUsable) {
+    if (!hasAnyUsableKeys || !hasAnyUsableModels) {
       await this.refreshKiloModels(true, abortSignal);
     }
 
@@ -466,15 +470,24 @@ await this.refreshKiloModels(true, abortSignal);
       .filter(k => k.available && !k.rateLimited)
       .map((_k, i) => i);
 
-    const models = this.modelCandidates
+    // First try zero-cost models only
+    let models = this.modelCandidates
       .filter(m => m.zeroCostVerified && m.available && !m.rateLimited)
       .map((_m, i) => i);
+
+    // If no zero-cost models available, fall back to any available model
+    if (models.length === 0) {
+      console.warn("No zero-cost Kilo models available; falling back to any available model");
+      models = this.modelCandidates
+        .filter(m => m.available && !m.rateLimited)
+        .map((_m, i) => i);
+    }
 
     if (keys.length === 0 || models.length === 0) {
       const availableKeys = this.keyStates.filter(k => k.available && !k.rateLimited);
       const configuredKeys = this.keyStates.filter(k => k.keyIndex !== undefined);
       if (availableKeys.length > 0 && configuredKeys.length > 0) {
-        throw new Error("No zero-cost Kilo Gateway models available — all configured models require payment");
+        throw new Error("No zero-cost Kilo Gateway models available and no fallback models available");
       }
       throw new Error("No available Kilo Gateway key/model combinations");
     }
@@ -679,6 +692,10 @@ const result: KiloResponse = {
       .filter(m => m.zeroCostVerified && m.available && !m.rateLimited)
       .map(m => m.modelId);
 
+    const anyModels = this.modelCandidates
+      .filter(m => m.available && !m.rateLimited)
+      .map(m => m.modelId);
+
     const usableKeys = this.keyStates.filter(k => k.available && !k.rateLimited).length;
     const rateLimitedKeys = this.keyStates
       .filter(k => k.rateLimited)
@@ -692,10 +709,10 @@ const result: KiloResponse = {
       this.keyStates.every(k => k.rateLimited);
 
     return {
-      available: zeroCostModels.length > 0 && usableKeys > 0,
+      available: (zeroCostModels.length > 0 || anyModels.length > 0) && usableKeys > 0,
       zeroCostModels,
       defaultModel: DEFAULT_KILO_MODEL_ID,
-      activeModel: zeroCostModels.length > 0 ? zeroCostModels[0] : null,
+      activeModel: (zeroCostModels.length > 0 ? zeroCostModels[0] : (anyModels.length > 0 ? anyModels[0] : null)),
       configuredKeys: this.keyStates.length,
       usableKeys,
       rateLimitedKeys,

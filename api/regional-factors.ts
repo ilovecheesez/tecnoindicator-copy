@@ -286,7 +286,7 @@ export default async function handler(req: Request): Promise<Response> {
       }
     }
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 6000);
+    const timeoutId = setTimeout(() => abortController.abort(), 10000);
     try {
       const result = await runFactorAnalysis(region, region, abortController);
       await setCache(cacheKey, { factors: result.factors, aiCurated: result.aiCurated }, FACTORS_CACHE_MS);

@@ -7,7 +7,6 @@ import {
   REGIONAL_DEFAULTS,
   getGlobalAnalytics,
   getRegionalAnalytics,
-  computeAnalyticsFromLivePrices,
 } from "./_shared/deterministicAnalytics.js";
 import { isRegion, type Region } from "./_shared/regions.js";
 import type { RegionId } from "./_shared/types.js";

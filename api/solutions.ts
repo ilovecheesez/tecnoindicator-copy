@@ -111,6 +111,79 @@ function buildSolution(s: unknown, scope: RegionId, validRegions: RegionId[]): S
   };
 }
 
+function buildFallbackSolutions(scope: RegionId, analytics: Record<string, unknown>, factors: Factor[]): Solution[] {
+  const now = new Date().toISOString();
+  const regionName = scope === "global" ? "global" : scope;
+  const fuelLevy = (analytics.fuelLevy as number) ?? 0;
+  const elecIdx = (analytics.electricityTariffAdjustmentIndex as number) ?? 0;
+  const waterIdx = (analytics.waterScarcityAdjustedPriceIndex as number) ?? 0;
+
+  const solutions: Solution[] = [
+    {
+      id: `solution-fallback-${Date.now()}-0`,
+      title: fuelLevy > 0
+        ? "Lock in fuel costs via fixed-price hedging"
+        : "Optimize fuel procurement with dynamic sourcing",
+      summary: `Based on ${regionName} market analytics (fuelLevy ${fuelLevy >= 0 ? "+" : ""}${fuelLevy}, electricity index ${elecIdx >= 0 ? "+" : ""}${elecIdx}), hedge exposure to ${fuelLevy > 0 ? "rising" : "volatile"} fuel costs using fixed-price contracts or financial swaps. Source from diversified suppliers to mitigate regional supply disruptions. Current analytics: ${analytics.dataSource ?? "benchmark data"}.`,
+      actions: [
+        "Secure fixed-price fuel contracts for 60-80% of Q4 2026 volume",
+        "Establish secondary supplier agreements outside primary delivery corridors",
+        "Monitor regional inventory levels weekly to adjust procurement timing",
+        "Use futures or swaps to hedge remaining variable exposure",
+      ],
+      commodities: ["oil"],
+      regions: [scope],
+      scope,
+      relatedFactors: factors.slice(0, 4).map((f) => f.id),
+      confidence: 65,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: `solution-fallback-${Date.now()}-1`,
+      title: elecIdx > 0
+        ? "Reduce electricity demand during peak pricing windows"
+        : "Stabilize electricity procurement with flexible contracts",
+      summary: `Electricity tariff adjustment index is ${elecIdx >= 0 ? "+" : ""}${elecIdx} for ${regionName}. ${elecIdx > 0 ? "Shift energy-intensive operations to off-peak hours and invest in demand response." : "Lock in flexible contracts that track real-time pricing to benefit from low-demand periods."}`,
+      actions: [
+        "Install smart energy management systems to optimize load scheduling",
+        "Negotiate time-of-use electricity contracts with tiered pricing",
+        "Deploy on-site power generation (solar/diesel backup) for peak shaving",
+        "Join regional demand response programs for additional revenue",
+      ],
+      commodities: ["electricity"],
+      regions: [scope],
+      scope,
+      relatedFactors: factors.slice(4, 8).map((f) => f.id),
+      confidence: 65,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: `solution-fallback-${Date.now()}-2`,
+      title: waterIdx > 0.5
+        ? "Secure alternative water sources before scarcity impacts operations"
+        : "Implement water recycling to reduce long-term supply risk",
+      summary: `Water scarcity adjusted price index is ${waterIdx >= 0 ? "+" : ""}${waterIdx} for ${regionName}. ${waterIdx > 0.5 ? "Drought conditions and rising costs indicate need for immediate alternative sourcing." : "Modest water cost changes allow proactive investment in efficiency."} ${factors.length > 0 ? `Key factors: ${factors.map((f) => f.name).join(", ")}.` : ""}`,
+      actions: [
+        "Conduct water audit to identify recycling and efficiency opportunities",
+        "Negotiate long-term water supply contracts with volume discounts",
+        "Invest in on-site water treatment or rainwater harvesting systems",
+        "Explore regulatory incentives for water conservation programs",
+      ],
+      commodities: ["water"],
+      regions: [scope],
+      scope,
+      relatedFactors: factors.slice(0, 4).map((f) => f.id),
+      confidence: 65,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+
+  return solutions;
+}
+
 async function fetchFreshEvidence(scope: RegionId, abortSignal: AbortSignal): Promise<any[]> {
   const evidenceCacheKey = `solutions:evidence:${scope}`;
   const cached = await getCache<any[]>(evidenceCacheKey, EVIDENCE_CACHE_MS);
@@ -135,28 +208,38 @@ async function fetchFreshEvidence(scope: RegionId, abortSignal: AbortSignal): Pr
 }
 
 export default async function handler(req: Request): Promise<Response> {
-  try {
-    const url = new URL(req.url);
-    const force = url.searchParams.get("force") === "true";
-    const regionParam = url.searchParams.get("region");
-    const isGlobal = regionParam === null || regionParam === "";
-    const scope: RegionId = isGlobal ? "global" : (isValidRegionId(regionParam) ? regionParam : "global");
-    const cacheKey = `solutions:${scope}`;
+  const url = new URL(req.url);
+  const force = url.searchParams.get("force") === "true";
+  const regionParam = url.searchParams.get("region");
+  const isGlobal = regionParam === null || regionParam === "";
+  const scope: RegionId = isGlobal ? "global" : (isValidRegionId(regionParam) ? regionParam : "global");
+  const cacheKey = `solutions:${scope}`;
 
-    if (!force) {
-      const cached = await getCache<Solution[]>(cacheKey, SOLUTIONS_CACHE_MS);
-      if (cached) {
-        return Response.json({ solutions: cached, scope, count: cached.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
-      }
+  if (!force) {
+    const cached = await getCache<Solution[]>(cacheKey, SOLUTIONS_CACHE_MS);
+    if (cached) {
+      return Response.json({ solutions: cached, scope, count: cached.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
     }
+  }
 
-    const analytics = scope === "global" ? await getGlobalAnalytics() : await getRegionalAnalytics(scope as Region);
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), 25000);
+
+  let analytics: Record<string, unknown>;
+  let factors: Factor[] = [];
+
+  try {
+    analytics = scope === "global"
+      ? (await getGlobalAnalytics()) as unknown as Record<string, unknown>
+      : (await getRegionalAnalytics(scope as Region)) as unknown as Record<string, unknown>;
     const factorsCache = await getCache<Factor[]>(`dynamic-factors:${scope}`, FACTORS_CACHE_MS);
-    const factors = factorsCache ?? [];
+    factors = factorsCache ?? [];
+  } catch (error) {
+    console.error("Analytics/factors fetch failed:", error);
+    analytics = { dataSource: "Static fallback (services unavailable)", fuelLevy: 0, electricityTariffAdjustmentIndex: 0, waterScarcityAdjustedPriceIndex: 0 };
+  }
 
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 15000);
-
+  try {
     let freshEvidence: any[] = [];
     try {
       freshEvidence = await fetchFreshEvidence(scope, abortController.signal);
@@ -186,13 +269,27 @@ export default async function handler(req: Request): Promise<Response> {
         .filter((s): s is Solution => s !== null)
         .slice(0, MAX_SOLUTIONS);
 
-      await setCache(cacheKey, solutions, SOLUTIONS_CACHE_MS);
-      return Response.json({ solutions, scope, count: solutions.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
-    } finally {
-      clearTimeout(timeoutId);
+      if (solutions.length > 0) {
+        await setCache(cacheKey, solutions, SOLUTIONS_CACHE_MS);
+        return Response.json({ solutions, scope, count: solutions.length, aiCurated: true, cacheKey, updatedAt: new Date().toISOString() }, { status: 200 });
+      }
+
+      // Kilo inference succeeded but returned no valid solutions — use deterministic fallback
+      console.warn("Kilo returned no valid solutions, using deterministic fallback");
+      const fallback = buildFallbackSolutions(scope, analytics, factors);
+      await setCache(cacheKey, fallback, SOLUTIONS_CACHE_MS);
+      return Response.json({ solutions: fallback, scope, count: fallback.length, aiCurated: false, cacheKey, updatedAt: new Date().toISOString(), error: "No AI-curated solutions; static fallbacks returned" }, { status: 200 });
+    } catch (error) {
+      console.error("Kilo inference failed, using deterministic fallback:", error);
+      const fallback = buildFallbackSolutions(scope, analytics, factors);
+      await setCache(cacheKey, fallback, SOLUTIONS_CACHE_MS);
+      return Response.json({ solutions: fallback, scope, count: fallback.length, aiCurated: false, cacheKey, updatedAt: new Date().toISOString(), error: "Kilo inference failed; static fallbacks returned" }, { status: 200 });
     }
   } catch (error) {
     console.error("Solutions error:", error);
-    return Response.json({ solutions: [], scope: "global" as RegionId, count: 0, aiCurated: false, cacheKey: "solutions:error", updatedAt: new Date().toISOString(), error: "Solutions temporarily unavailable" }, { status: 200 });
+    const fallback = buildFallbackSolutions(scope, analytics, factors);
+    return Response.json({ solutions: fallback, scope, count: fallback.length, aiCurated: false, cacheKey: "solutions:error", updatedAt: new Date().toISOString(), error: "Solutions temporarily unavailable; static fallbacks returned" }, { status: 200 });
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
