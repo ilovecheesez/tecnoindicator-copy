@@ -18,29 +18,29 @@ const GLOBAL_QUERIES = [
 
 const REGION_QUERIES: Record<Region, string[]> = {
   asia: [
-    "Asia oil market prices China India demand OPEC 2026",
-    "Asia electricity power prices renewables grid China India 2026",
-    "Asia water prices scarcity drought urbanization 2026",
+    "oil market prices China India demand OPEC 2026",
+    "electricity power prices renewables grid China India 2026",
+    "water prices scarcity drought urbanization 2026",
   ],
   europe: [
-    "Europe oil market prices Brent Russian supply sanctions 2026",
-    "Europe electricity power prices carbon ETS renewables gas 2026",
-    "Europe water prices drought scarcity Alpine hydropower 2026",
+    "oil market prices Brent Russian supply sanctions 2026",
+    "electricity power prices carbon ETS renewables gas 2026",
+    "water prices drought scarcity Alpine hydropower 2026",
   ],
   africa: [
-    "Africa oil market prices Nigeria Angola production exports 2026",
-    "Africa electricity power prices diesel gensets grid reliability 2026",
-    "Africa water prices drought scarcity Sahel utilities 2026",
+    "oil market prices Nigeria Angola production exports 2026",
+    "electricity power prices diesel gensets grid reliability 2026",
+    "water prices drought scarcity Sahel utilities 2026",
   ],
   americas: [
-    "Americas oil market prices WTI shale LNG exports 2026",
-    "Americas electricity power prices hydro drought Henry Hub 2026",
-    "Americas water prices drought California Southwest utilities 2026",
+    "oil market prices WTI shale LNG exports 2026",
+    "electricity power prices hydro drought Henry Hub 2026",
+    "water prices drought California Southwest utilities 2026",
   ],
   oceania: [
-    "Oceania oil market prices LNG import parity Australia 2026",
-    "Oceania electricity power prices NEM NZ wholesale drought 2026",
-    "Oceania water prices drought Sydney Melbourne utilities 2026",
+    "oil market prices LNG import parity Australia 2026",
+    "electricity power prices NEM NZ wholesale drought 2026",
+    "water prices drought Sydney Melbourne utilities 2026",
   ],
 };
 

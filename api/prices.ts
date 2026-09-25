@@ -13,19 +13,10 @@ import { isRegion, type Region } from "./_shared/regions.js";
 import type { RegionId } from "./_shared/types.js";
 import { safeParseJson } from "./_shared/validation.js";
 
-const OIL_QUERY_PREFIXES: Record<RegionId, string> = {
-  global: "",
-  asia: "[Asia] ",
-  europe: "[Europe] ",
-  africa: "[Africa] ",
-  americas: "[Americas] ",
-  oceania: "[Oceania] ",
-};
-
 const COMMODITY_QUERIES = [
   { commodity: "oil", queryTemplate: "Brent crude oil price 2026" },
-  { commodity: "electricity", queryTemplate: "Global electricity wholesale price 2026" },
-  { commodity: "water", queryTemplate: "Water price per cubic meter 2026" },
+  { commodity: "electricity", queryTemplate: "electricity wholesale price 2026" },
+  { commodity: "water", queryTemplate: "water price per cubic meter 2026" },
 ];
 
 const PRICE_EXTRACTION_PROMPT = `You are an expert financial data analyst specializing in commodity pricing. Your task is to extract precise price data from search results.
@@ -87,7 +78,7 @@ export default async function handler(req: Request): Promise<Response> {
 
     // Initialize abort controller with 15s timeout
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 15000);
+    const timeoutId = setTimeout(() => abortController.abort(), 25000);
 
     try {
       // Try to get live prices from TinyFish
@@ -195,9 +186,9 @@ async function getLivePricesFromTinyFish(scope: RegionId, abortSignal: AbortSign
   isLive: boolean;
 }> {
   const searchPromises = COMMODITY_QUERIES.map(async ({ commodity, queryTemplate }) => {
-    const query = `${OIL_QUERY_PREFIXES[scope]}${queryTemplate}`;
+    const query = queryTemplate;
     try {
-      return await tinyfishRouter.tinyfishSearch(query, { limit: 10 }, abortSignal);
+      return await tinyfishRouter.tinyfishSearch(query, { limit: 10, region: scope === "global" ? undefined : scope }, abortSignal);
     } catch (error) {
       console.warn(`Failed to search for ${commodity}:`, error);
       return { results: [], total: 0, keyIndex: -1 };
