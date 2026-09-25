@@ -1,13 +1,12 @@
 import { kiloRouter } from "./_shared/kiloRouter.js";
 import { tinyfishRouter } from "./_shared/tinyfishRouter.js";
 import { getGlobalAnalytics, getRegionalAnalytics } from "./_shared/deterministicAnalytics.js";
-import { FACTORS_CACHE_MS, SOLUTIONS_CACHE_MS } from "./_shared/http.js";
+import { SOLUTIONS_CACHE_MS, MAX_SOLUTIONS } from "./_shared/http.js";
 import { getCache, setCache } from "./_shared/cache.js";
-import { safeParseJson } from "./_shared/validation.js";
+import { safeParseJson, validateRange, validateCategory, validateFactors, validateSolutions } from "./_shared/validation.js";
 import { isRegion, type Region } from "./_shared/regions.js";
 import type { Factor, Solution, RegionId } from "./_shared/types.js";
 
-const MAX_SOLUTIONS = 3;
 const EVIDENCE_CACHE_MS = 30_000;
 
 const GLOBAL_QUERIES = [
@@ -222,8 +221,8 @@ export default async function handler(req: Request): Promise<Response> {
     }
   }
 
-  const abortController = new AbortController();
-  const timeoutId = setTimeout(() => abortController.abort(), 25000);
+   const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), 30000);
 
   let analytics: Record<string, unknown>;
   let factors: Factor[] = [];
@@ -268,6 +267,8 @@ export default async function handler(req: Request): Promise<Response> {
         .map((s: unknown) => buildSolution(s, scope, validRegions))
         .filter((s): s is Solution => s !== null)
         .slice(0, MAX_SOLUTIONS);
+
+      validateSolutions(solutions, MAX_SOLUTIONS);
 
       if (solutions.length > 0) {
         await setCache(cacheKey, solutions, SOLUTIONS_CACHE_MS);

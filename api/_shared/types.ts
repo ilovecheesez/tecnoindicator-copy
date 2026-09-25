@@ -2,6 +2,9 @@ export const REGIONS = ["asia", "europe", "africa", "americas", "oceania"] as co
 export type Region = typeof REGIONS[number];
 export type RegionId = Region | "global";
 
+export const VALID_CATEGORIES = ["Market", "Policy", "Structural", "Infrastructure", "Environmental", "Geopolitical", "Technological"] as const;
+export type Category = typeof VALID_CATEGORIES[number];
+
 export type CommodityId = "oil" | "electricity" | "water";
 
 export interface Factor {
