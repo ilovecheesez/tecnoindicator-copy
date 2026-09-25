@@ -206,24 +206,23 @@ async function getLivePricesFromTinyFish(scope: RegionId, abortSignal: AbortSign
 
   const searchResults = await Promise.all(searchPromises);
 
-  // Use Kilo AI to analyze the search results and extract precise prices
+  // Extract raw text from TinyFish search results (titles and snippets)
+  const searchResultsText = searchResults.map((result, index) => {
+    const commodity = COMMODITY_QUERIES[index].commodity;
+    const resultLines = (result.results ?? []).map((r: any) => 
+      `- ${r.title}\n  Snippet: ${r.snippet}\n  URL: ${r.url}\n  Published: ${r.publishedAt}\n`
+    ).join('\n');
+    
+    return `Commodity: ${commodity}\n${resultLines}`;
+  }).join('\n\n');
+
+  // Use Kilo AI to analyze the raw text and extract precise prices
   const payload = {
     messages: [
       { role: "system", content: PRICE_EXTRACTION_PROMPT },
       {
         role: "user",
-        content: JSON.stringify({
-          scope,
-          results: searchResults.map((result, index) => ({
-            commodity: COMMODITY_QUERIES[index].commodity,
-            results: (result.results ?? []).map((r: any) => ({
-              title: r.title,
-              snippet: r.snippet,
-              url: sanitizeUrl(r.url) ?? r.url,
-              publishedAt: r.publishedAt,
-            })),
-          })),
-        }),
+        content: `Scope: ${scope}\n\n${searchResultsText}`,
       },
     ],
     max_tokens: 2048,
