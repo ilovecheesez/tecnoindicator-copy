@@ -7,6 +7,7 @@ interface HealthResponse {
     available: boolean;
     usableKeys: number;
     configuredKeys: number;
+    keyFormats?: { jwt: number; opaque: number; unrecognized: number };
   };
   tinyfish: {
     available: boolean;
@@ -72,6 +73,7 @@ export default async function handler(_req: Request): Promise<Response> {
         available: kiloStatus.available,
         usableKeys: kiloStatus.usableKeys,
         configuredKeys: kiloStatus.configuredKeys,
+        keyFormats: kiloStatus.keyFormats,
       },
       tinyfish: {
         available: tinyfishStatus.available,
